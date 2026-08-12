@@ -1,0 +1,405 @@
+// Prisma schema — EduPro E-Learning Platform
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  ADMIN
+  SUPERADMIN
+}
+
+// Two-step verification method. DISABLED = off.
+// EMAIL   -> OTP sent to the user's inbox on login / on enable.
+// GOOGLE_AUTH -> TOTP via an authenticator app.
+enum TWO_STEP {
+  DISABLED
+  EMAIL
+  GOOGLE_AUTH
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  LOGIN
+  PASSWORD_RESET
+  TWO_FACTOR
+}
+
+enum RoadmapLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum RoadmapItemStatus {
+  SUGGESTED
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+// ---------------------------------------------------------------------------
+// Auth / identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  password  String
+  role      UserRole @default(STUDENT)
+  avatar    String?
+  twoStep   TWO_STEP @default(DISABLED)
+  // TOTP secret for Google Authenticator (plaintext in DB, as in legacy app).
+  twoStepSecret String?
+  // When non-null the email has been verified.
+  emailVerifiedAt DateTime?
+  isBanned  Boolean  @default(false)
+  lastLoginAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordReset[]
+  otpCodes       OtpCode[]
+  enrollments    Enrollment[]
+  completedLessons CompletedLesson[]
+  quizResults    QuizResult[]
+  testResults    TestResult[]
+  comments       Comment[]
+  reviews        Review[]
+  wishlistItems  WishlistItem[]
+  certificates   Certificate[]
+  reportsFiled   Report[]      @relation("Reporter")
+
+  @@index([role])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  // SHA-256 of the opaque refresh token value.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  ip        String?
+  userAgent String?
+
+  @@index([userId])
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model OtpCode {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  purpose   OtpPurpose
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int        @default(0)
+  createdAt DateTime   @default(now())
+
+  @@index([userId, purpose])
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  courses Course[]
+}
+
+model Course {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  subtitle  String?
+  // HTML body describing the course (rendered on the course page).
+  description String?
+  coverImage String?
+  // Price in THB; 0 = free.
+  price     Int      @default(0)
+  isPublished Boolean @default(false)
+  isFeatured Boolean  @default(false)
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Denormalized aggregates (kept in sync by services).
+  rating      Float @default(0)
+  ratingCount Int   @default(0)
+  studentCount Int  @default(0)
+
+  modules       Module[]
+  enrollments   Enrollment[]
+  reviews       Review[]
+  wishlistItems WishlistItem[]
+  tests         Test[]
+  certificates  Certificate[]
+  reports       Report[]
+
+  @@index([isPublished, createdAt])
+  @@index([categoryId])
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  position    Int
+  createdAt   DateTime @default(now())
+
+  lessons Lesson[]
+  quizzes Quiz[]
+
+  @@unique([courseId, position])
+  @@index([courseId])
+}
+
+model Lesson {
+  id          String   @id @default(cuid())
+  moduleId    String
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title       String
+  videoUrl    String?
+  videoDuration Int? // seconds
+  article     String? // HTML content for article lessons
+  position    Int
+  isFree      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  completedBy CompletedLesson[]
+  comments    Comment[]
+
+  @@unique([moduleId, position])
+  @@index([moduleId])
+}
+
+// ---------------------------------------------------------------------------
+// Learning
+// ---------------------------------------------------------------------------
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model CompletedLesson {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  completedAt DateTime @default(now())
+
+  @@unique([userId, lessonId])
+  @@index([lessonId])
+}
+
+// ---------------------------------------------------------------------------
+// Quizzes (per module) and tests (per course / final exam)
+// ---------------------------------------------------------------------------
+
+model Quiz {
+  id        String   @id @default(cuid())
+  moduleId  String
+  module    Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title     String
+  // Array of { id, question, options: string[], correctIndex }
+  questions Json     @default("[]")
+  createdAt DateTime @default(now())
+
+  quizResults QuizResult[]
+
+  @@index([moduleId])
+}
+
+model QuizResult {
+  id        String   @id @default(cuid())
+  quizId    String
+  quiz      Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score     Int
+  total     Int
+  passed    Boolean
+  createdAt DateTime @default(now())
+
+  // Latest attempt per user is kept (upsert on submit).
+  @@unique([quizId, userId])
+  @@index([userId])
+}
+
+model Test {
+  id              String   @id @default(cuid())
+  courseId        String
+  course          Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title           String
+  description     String?
+  // Array of { id, question, options: string[], correctIndex }
+  questions       Json     @default("[]")
+  passingScore    Int      @default(60) // percent required to pass
+  timeLimitMinutes Int     @default(30)
+  attemptLimit    Int      @default(3)
+  isEnabled       Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  testResults TestResult[]
+
+  @@index([courseId])
+}
+
+model TestResult {
+  id               String   @id @default(cuid())
+  testId           String
+  test             Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score            Int
+  total            Int
+  percent          Int
+  passed           Boolean
+  // Snapshot of { questionId, selected, correct }
+  answers          Json     @default("[]")
+  startedAt        DateTime
+  submittedAt      DateTime @default(now())
+  timeTakenSeconds Int      @default(0)
+
+  certificates Certificate[]
+
+  @@index([testId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Certificates
+// ---------------------------------------------------------------------------
+
+model Certificate {
+  id                 String   @id @default(cuid())
+  certificateNumber  String   @unique
+  courseId           String
+  course             Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  testResultId       String?
+  testResult         TestResult? @relation(fields: [testResultId], references: [id], onDelete: SetNull)
+  pdfUrl             String?
+  issuedAt           DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+// ---------------------------------------------------------------------------
+// Comments, reviews, wishlist, reports
+// ---------------------------------------------------------------------------
+
+model Comment {
+  id        String   @id @default(cuid())
+  lessonId  String
+  lesson    Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  parentId  String?
+  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([lessonId, createdAt])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int // 1..5
+  content   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  courseId   String
+  course     Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User         @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     String
+  details    String?
+  status     ReportStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+  resolvedAt DateTime?
+  resolvedBy String?
+
+  @@index([status])
+  @@index([courseId])
+}
