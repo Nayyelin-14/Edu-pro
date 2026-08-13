@@ -132,7 +132,7 @@ export default function AdminUsersPage() {
                         className="h-8 w-32"
                       >
                         <option value="STUDENT">Student</option>
-                        <option value="ADMIN">Admin</option>
+                        <option value="INSTRUCTOR">Instructor</option>
                         <option value="SUPERADMIN">Superadmin</option>
                       </Select>
                     )}

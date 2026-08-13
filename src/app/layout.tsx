@@ -34,7 +34,7 @@ export default async function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen bg-background font-sans antialiased">
+      <body className="min-h-screen bg-background font-sans antialiased" suppressHydrationWarning>
         <Providers initialLocale={initialLocale}>{children}</Providers>
       </body>
     </html>

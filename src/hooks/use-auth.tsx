@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api-client";
+import { clearRememberMe } from "@/lib/remember-me";
 import type { PublicUser } from "@/types/user";
 
 interface AuthState {
@@ -53,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
       });
     } finally {
+      clearRememberMe();
       setUser(null);
       router.push("/");
       router.refresh();

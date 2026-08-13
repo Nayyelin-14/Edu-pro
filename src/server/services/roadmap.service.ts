@@ -1,23 +1,31 @@
 /**
  * AI Personalized Learning Roadmap — server orchestration.
  *
- * This is the planner. It does NOT call the AI provider directly; instead it
- * receives an AIProvider and repository functions so it can be unit-tested with
- * in-memory fakes and no network/DB.
+ * Generation is asynchronous: a POST creates one job per idempotency key
+ * (userId + fingerprint), an Upstash QStash worker later claims and processes
+ * it. The job table's UNIQUE(userId, fingerprint) index is the idempotency
+ * anchor — at most one job (and therefore one AI call) per goal fingerprint,
+ * even across instances and duplicate QStash deliveries.
  *
- * Pipeline:
- *   1. duplicate detection (24h)
- *   2. skill extraction (deterministic)
- *   3. course retrieval (real, published only)
- *   4. relevance ranking (deterministic)
- *   5. user progress lookup (existing Enrollment/CompletedLesson)
- *   6. LLM call
- *   7. Zod validation of AI output
- *   8. course-resolution against the REAL catalog (hallucination guard)
- *   9. persist
+ * Pipeline (executed only by the job owner while holding the PROCESSING lease):
+ *   1. course retrieval (real, published only)
+ *   2. relevance ranking (deterministic)
+ *   3. user progress lookup (existing Enrollment/CompletedLesson)
+ *   4. LLM call
+ *   5. Zod validation of AI output
+ *   6. course-resolution against the REAL catalog (hallucination guard)
+ *   7. persist
  *
  * The AI never writes to the DB, never decides IDs, and never sees user
  * identity beyond "this course is completed / in-progress".
+ *
+ * Job state machine:
+ *   QUEUED    -> PROCESSING -> COMPLETED
+ *   QUEUED    -> PROCESSING -> FAILED
+ *   PROCESSING -> QUEUED    (expired lease re-queued by a new POST, or retryable
+ *                           failure re-published by the worker)
+ *   PROCESSING -> FAILED    (non-retryable failure or attempts exhausted)
+ *   COMPLETED -> COMPLETED  (duplicate delivery / POST is a no-op)
  */
 import type { AIProvider, CourseCandidate, CourseProgress, PlannerContext } from "@/lib/ai/provider";
 import { extractSkills, rankAndFilter } from "@/lib/ai/retrieval";
@@ -32,61 +40,69 @@ import {
 } from "@/lib/validation/roadmap";
 import { Prisma } from "@/generated/prisma/client";
 import { GenerationStatus, RoadmapItemStatus } from "@/generated/prisma/enums";
+import type { RoadmapJobPublisher } from "./roadmap.job-publisher";
+
+export type JobStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED";
 
 // ---------------------------------------------------------------------------
-// Repositories (injectable so tests can fake them)
+// Repository (injectable so tests can fake it)
 // ---------------------------------------------------------------------------
 
-export interface GenerationClaim {
+export interface RoadmapJob {
+  id: string;
   userId: string;
   fingerprint: string;
+  goal: string | null;
+  level: RoadmapLevel | null;
+  durationWeeks: number | null;
+  hoursPerWeek: number | null;
+  language: string | null;
+  status: JobStatus;
+  roadmapId: string | null;
   expiresAt: Date;
+  attemptCount: number;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  qstashMessageId: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  failedAt: Date | null;
+  createdAt: Date;
 }
 
-export interface RoadmapRepo {
-  findRecentDuplicate(opts: {
-    userId: string;
-    goal: string;
-    level: RoadmapLevel;
-    durationWeeks: number;
-    hoursPerWeek: number;
-    language: string;
-  }): Promise<ExistingRoadmap | null>;
-  loadCatalog(): Promise<CourseCandidate[]>;
-  loadProgress(userId: string): Promise<Map<string, CourseProgress>>;
-  persist(roadmap: PersistRoadmap): Promise<RoadmapResult>;
-  /**
-   * Atomically claim the right to generate a roadmap for (userId, fingerprint).
-   * Backed by a UNIQUE index on (userId, fingerprint), so at most one caller
-   * can hold a claim per fingerprint at any time — even across server
-   * instances. Returns true if this caller now owns the claim.
-   */
-  claimGeneration(claim: GenerationClaim): Promise<boolean>;
-  /**
-   * Resolve a blocked claim slot:
-   *  - steal an expired GENERATING claim (crash recovery),
-   *  - clear stale COMPLETED/FAILED rows and re-claim (24h re-generation).
-   * Returns "acquired" when this caller now owns the claim, "busy" otherwise.
-   */
-  resolveGeneration(claim: GenerationClaim): Promise<"acquired" | "busy">;
-  /** Mark an owned claim COMPLETED (with roadmapId) or FAILED. */
-  markGeneration(
-    claim: Pick<GenerationClaim, "userId" | "fingerprint">,
-    status: "COMPLETED" | "FAILED",
-    roadmapId?: string,
-  ): Promise<void>;
-}
-
-export interface ExistingRoadmap {
-  id: string;
-  title: string;
+export interface RoadmapJobCreate {
+  userId: string;
+  fingerprint: string;
   goal: string;
   level: RoadmapLevel;
   durationWeeks: number;
   hoursPerWeek: number;
   language: string;
-  createdAt: Date;
-  items: StoredRoadmapItem[];
+  expiresAt: Date;
+}
+
+export interface RoadmapRepo {
+  /** The full published catalog (up to 100 courses), WITHOUT opaque keys —
+   * keys are assigned per request by the service before they reach the AI. */
+  loadCatalog(): Promise<Omit<CourseCandidate, "key">[]>;
+  loadProgress(userId: string): Promise<Map<string, CourseProgress>>;
+  persist(roadmap: PersistRoadmap): Promise<RoadmapResult>;
+  // Job table ---------------------------------------------------------------
+  getJobByFingerprint(userId: string, fingerprint: string): Promise<RoadmapJob | null>;
+  getJobById(jobId: string): Promise<RoadmapJob | null>;
+  /** Insert a QUEUED job. Returns null when the (userId, fingerprint) is taken. */
+  createJob(job: RoadmapJobCreate): Promise<RoadmapJob | null>;
+  /** Reset a FAILED job back to QUEUED (fresh accepted attempt). */
+  resetFailedJob(userId: string, fingerprint: string): Promise<void>;
+  /** Atomically claim QUEUED -> PROCESSING. Returns false if already claimed. */
+  claimJob(jobId: string, expiresAt: Date): Promise<boolean>;
+  /** Atomically steal an expired PROCESSING job. Returns false if lost. */
+  stealJob(jobId: string, expiresAt: Date): Promise<boolean>;
+  markJobCompleted(jobId: string, roadmapId: string): Promise<void>;
+  markJobFailed(jobId: string, code: string, message: string): Promise<void>;
+  /** Release a PROCESSING job back to QUEUED (retryable failure / stale lease). */
+  requeueJob(jobId: string, expiresAt: Date, code: string, message: string): Promise<void>;
+  setJobMessageId(jobId: string, messageId: string | null): Promise<void>;
 }
 
 export interface StoredRoadmapItem {
@@ -117,6 +133,25 @@ export interface NormalizedStage {
   isTopic: boolean;
 }
 
+export interface RoadmapGenerationMetadata {
+  /** Stable provider identifier, e.g. "gemini". Null when unknown. */
+  provider: string | null;
+  /** Model identifier as configured. Null when unknown. */
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  /** Monotonic wall time of the provider call, in ms. */
+  durationMs: number | null;
+  /** When the generation finished. */
+  generatedAt: Date;
+  usageSource: "provider_reported" | "calculated" | "unavailable";
+  /** Which job attempt (1-based) produced this roadmap. */
+  attemptCount: number;
+  /** How many retries happened before this attempt (attemptCount - 1). */
+  retryCount: number;
+}
+
 export interface PersistRoadmap {
   userId: string;
   title: string;
@@ -126,6 +161,8 @@ export interface PersistRoadmap {
   hoursPerWeek: number;
   language: "en" | "th";
   stages: NormalizedStage[];
+  metadata: RoadmapGenerationMetadata;
+  saved: boolean;
 }
 
 export interface RoadmapResult {
@@ -145,18 +182,20 @@ export interface RoadmapResult {
 // Service factory (production implementation uses Prisma)
 // ---------------------------------------------------------------------------
 
-const DUPLICATE_WINDOW_MS = 24 * 60 * 60 * 1000;
-const CATALOG_LIMIT = 15;
+// The full scored catalog is offered to the planner (loadCatalog returns up to
+// 100 published courses). No arbitrary top-N cap: a lower-ranked but relevant
+// course must still be reachable by the LLM. `minScore` only excludes courses
+// that share no keyword with the goal, keeping the prompt focused.
 const CATALOG_MIN_SCORE = 1;
 
-// Claim-table lease: how long a GENERATING claim may live before it is
-// stealable by another request (crash recovery). Generous vs the 30s provider
-// timeout so a slow-but-live generation is never stolen.
-const CLAIM_LEASE_MS = 10 * 60 * 1000;
-// How long a concurrent duplicate request polls for the winner's roadmap.
-const CLAIM_WAIT_MS = 75 * 1000;
-// Poll interval for the above.
-const CLAIM_POLL_MS = 300;
+// Opaque key prefix assigned to each candidate before it reaches the LLM.
+const CANDIDATE_KEY_PREFIX = "cand";
+
+// PROCESSING lease: how long a job may be worked on before it is stealable.
+const JOB_LEASE_MS = 10 * 60 * 1000;
+// Bounded job-level retries after a retryable failure (provider 5xx/timeout,
+// rate limit, invalid AI output). The provider itself also retries once.
+const MAX_JOB_ATTEMPTS = 3;
 
 export function computeFingerprint(
   userId: string,
@@ -168,157 +207,280 @@ export function computeFingerprint(
     .digest("hex");
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export interface RoadmapServiceOptions {
+  /** Lease for a PROCESSING job before it becomes stealable. */
+  jobLeaseMs?: number;
+  /** Maximum job-level attempts for retryable failures. */
+  maxJobAttempts?: number;
 }
 
-export interface RoadmapServiceOptions {
-  /** How long a live GENERATING claim may exist before it is stealable. */
-  claimLeaseMs?: number;
-  /** How long a concurrent duplicate request polls for the winner. */
-  claimWaitMs?: number;
-  /** Poll interval for concurrent duplicate requests. */
-  claimPollMs?: number;
+export interface CreateJobResult {
+  jobId: string;
+  status: JobStatus;
+  roadmapId: string | null;
+  isNew: boolean;
 }
+
+export type ProcessJobOutcome =
+  | { outcome: "completed"; roadmapId: string; attempt: number }
+  | { outcome: "retryable"; attempt: number; code: string }
+  | { outcome: "failed"; attempt: number; code: string }
+  | { outcome: "noop" };
 
 export class RoadmapService {
-  private readonly claimLeaseMs: number;
-  private readonly claimWaitMs: number;
-  private readonly claimPollMs: number;
+  private readonly jobLeaseMs: number;
+  private readonly maxJobAttempts: number;
 
   constructor(
     private readonly provider: AIProvider,
+    private readonly publisher: RoadmapJobPublisher,
     opts: RoadmapServiceOptions = {},
   ) {
-    this.claimLeaseMs = opts.claimLeaseMs ?? CLAIM_LEASE_MS;
-    this.claimWaitMs = opts.claimWaitMs ?? CLAIM_WAIT_MS;
-    this.claimPollMs = opts.claimPollMs ?? CLAIM_POLL_MS;
-  }
-
-  async generate(
-    userId: string,
-    input: GenerateRoadmapInput,
-    repo: RoadmapRepo,
-  ): Promise<RoadmapResult> {
-    // [1] duplicate detection — return existing if identical within 24h
-    const dupKey = {
-      userId,
-      goal: input.goal,
-      level: input.level,
-      durationWeeks: input.durationWeeks,
-      hoursPerWeek: input.hoursPerWeek,
-      language: input.language,
-    } as const;
-    const dupLookup = () => repo.findRecentDuplicate(dupKey);
-
-    const duplicate = await dupLookup();
-    if (duplicate) {
-      return { ...duplicate, isDuplicate: true };
-    }
-
-    // [1b] DB-enforced idempotency: claim the (userId, fingerprint) slot so at
-    // most one request per goal calls the AI provider — even across instances.
-    const fingerprint = computeFingerprint(userId, input);
-    const claim: GenerationClaim = {
-      userId,
-      fingerprint,
-      expiresAt: new Date(Date.now() + this.claimLeaseMs),
-    };
-
-    let acquired = await repo.claimGeneration(claim);
-
-    if (!acquired) {
-      // Someone else holds a live claim. Either their roadmap appears within
-      // the wait window (return it), or their claim is released (steal / clear
-      // stale rows) and we take over.
-      const deadline = Date.now() + this.claimWaitMs;
-      while (Date.now() < deadline) {
-        const existing = await dupLookup();
-        if (existing) return { ...existing, isDuplicate: true };
-        const resolved = await repo.resolveGeneration(claim);
-        if (resolved === "acquired") {
-          acquired = true;
-          break;
-        }
-        await sleep(this.claimPollMs);
-      }
-      if (!acquired) {
-        const lastChance = await repo.resolveGeneration(claim);
-        if (lastChance === "acquired") acquired = true;
-      }
-    }
-
-    if (!acquired) {
-      throw new ApiError(
-        503,
-        "A roadmap for this goal is already being generated. Please retry in a moment.",
-      );
-    }
-
-    // We own the claim. Guard against a previous owner that persisted a
-    // roadmap but crashed before marking the claim COMPLETED.
-    const stale = await dupLookup();
-    if (stale) {
-      await repo.markGeneration({ userId, fingerprint }, "COMPLETED", stale.id);
-      return { ...stale, isDuplicate: true };
-    }
-
-    try {
-      const created = await this.runGeneration(userId, input, repo);
-      await repo.markGeneration({ userId, fingerprint }, "COMPLETED", created.id);
-      return created;
-    } catch (err) {
-      await repo.markGeneration({ userId, fingerprint }, "FAILED").catch(() => {});
-      throw err;
-    }
+    this.jobLeaseMs = opts.jobLeaseMs ?? JOB_LEASE_MS;
+    this.maxJobAttempts = opts.maxJobAttempts ?? MAX_JOB_ATTEMPTS;
   }
 
   /**
-   * The actual generation pipeline. Only called while this request owns the
-   * claim for (userId, fingerprint), so exactly one AI call is ever made per
-   * distinct goal fingerprint.
+   * Create (or return the existing) job for an idempotency key.
+   *
+   * - COMPLETED job -> returns the roadmapId (no new attempt, no quota hit).
+   * - QUEUED/PROCESSING job -> returns it as-is (no new attempt, no quota hit);
+   *   a PROCESSING job whose lease expired is re-queued + re-published so a
+   *   crashed worker never strands the user.
+   * - FAILED job -> reset to QUEUED (counts as ONE new accepted attempt).
+   * - No job -> create QUEUED (one new accepted attempt).
+   *
+   * `beforeNewAttempt` (e.g. the daily quota check) is invoked exactly once,
+   * BEFORE any mutation, and may throw to abort.
+   */
+  async createJob(
+    userId: string,
+    input: GenerateRoadmapInput,
+    repo: RoadmapRepo,
+    opts: { publish?: boolean; beforeNewAttempt?: () => Promise<void> } = {},
+  ): Promise<CreateJobResult> {
+    const fingerprint = computeFingerprint(userId, input);
+    const publish = opts.publish ?? false;
+
+    let job = await repo.getJobByFingerprint(userId, fingerprint);
+
+    if (job?.status === "COMPLETED") {
+      return { jobId: job.id, status: "COMPLETED", roadmapId: job.roadmapId, isNew: false };
+    }
+
+    if (job?.status === "QUEUED") {
+      return { jobId: job.id, status: "QUEUED", roadmapId: null, isNew: false };
+    }
+
+    if (job?.status === "PROCESSING") {
+      if (job.expiresAt >= new Date()) {
+        // Live lease — a worker is (or was) handling it; return as-is.
+        return { jobId: job.id, status: "PROCESSING", roadmapId: null, isNew: false };
+      }
+      // Stale lease: the worker crashed before finishing. Re-queue and nudge.
+      await repo.requeueJob(job.id, new Date(Date.now() + this.jobLeaseMs), "stale_lease", "Re-queued after a stalled attempt.");
+      if (publish) await this.publishAndRecord(repo, job.id);
+      return { jobId: job.id, status: "QUEUED", roadmapId: null, isNew: false };
+    }
+
+    // FAILED, or no job yet -> this is a new accepted attempt.
+    if (job?.status === "FAILED") {
+      await opts.beforeNewAttempt?.();
+      await repo.resetFailedJob(userId, fingerprint);
+      job = await repo.getJobByFingerprint(userId, fingerprint);
+    } else {
+      await opts.beforeNewAttempt?.();
+      job = await repo.createJob({
+        userId,
+        fingerprint,
+        goal: input.goal,
+        level: input.level,
+        durationWeeks: input.durationWeeks,
+        hoursPerWeek: input.hoursPerWeek,
+        language: input.language ?? "en",
+        expiresAt: new Date(Date.now() + this.jobLeaseMs),
+      });
+      if (!job) {
+        // Lost the create race — another request created it.
+        job = await repo.getJobByFingerprint(userId, fingerprint);
+        if (!job) throw new ApiError(503, "Could not create the generation job. Please retry.");
+        if (job.status === "COMPLETED") {
+          return { jobId: job.id, status: "COMPLETED", roadmapId: job.roadmapId, isNew: false };
+        }
+        return { jobId: job.id, status: job.status, roadmapId: null, isNew: false };
+      }
+    }
+
+    // By this point a job is guaranteed to exist (every null path returned above).
+    if (!job) throw new ApiError(503, "Could not create the generation job. Please retry.");
+
+    if (publish) await this.publishAndRecord(repo, job.id);
+    return { jobId: job.id, status: "QUEUED", roadmapId: null, isNew: true };
+  }
+
+  private async publishAndRecord(repo: RoadmapRepo, jobId: string): Promise<void> {
+    const messageId = await this.publisher.publishInitial(jobId);
+    await repo.setJobMessageId(jobId, messageId ?? null);
+  }
+
+  /**
+   * Claim and run a job (called by the QStash worker or the dev inline path).
+   * Idempotent: duplicate deliveries and live-lease collisions return "noop".
+   */
+  async processJob(jobId: string, repo: RoadmapRepo): Promise<ProcessJobOutcome> {
+    const job = await repo.getJobById(jobId);
+    if (!job) {
+      logJob("missing", jobId);
+      return { outcome: "noop" };
+    }
+
+    if (job.status === "COMPLETED" || job.status === "FAILED") {
+      logJob("duplicate_delivery", jobId, { status: job.status });
+      return { outcome: "noop" };
+    }
+
+    const started = performance.now();
+    let attempt = job.attemptCount;
+
+    if (job.status === "PROCESSING") {
+      if (job.expiresAt >= new Date()) {
+        logJob("busy", jobId, { attempt: attempt + 1 });
+        return { outcome: "noop" }; // live lease
+      }
+      const stolen = await repo.stealJob(job.id, new Date(Date.now() + this.jobLeaseMs));
+      if (!stolen) {
+        logJob("steal_lost", jobId);
+        return { outcome: "noop" }; // lost the steal race
+      }
+      attempt += 1;
+      logJob("stolen", jobId, { attempt });
+    } else {
+      // QUEUED
+      const claimed = await repo.claimJob(job.id, new Date(Date.now() + this.jobLeaseMs));
+      if (!claimed) {
+        logJob("claim_lost", jobId);
+        return { outcome: "noop" }; // someone else claimed it
+      }
+      attempt += 1;
+      logJob("claimed", jobId, { userId: job.userId, attempt });
+    }
+
+    const input = this.jobInput(job);
+    if (!input) {
+      await repo.markJobFailed(job.id, "missing_input", "The job is missing its generation input.");
+      logJob("failed", jobId, { userId: job.userId, attempt, code: "missing_input" });
+      return { outcome: "failed", attempt, code: "missing_input" };
+    }
+
+    try {
+      const roadmap = await this.runGeneration(job.userId, input, repo, attempt);
+      await repo.markJobCompleted(job.id, roadmap.id);
+      logJob("completed", jobId, {
+        userId: job.userId,
+        attempt,
+        durationMs: Math.round(performance.now() - started),
+        roadmapId: roadmap.id,
+      });
+      return { outcome: "completed", roadmapId: roadmap.id, attempt };
+    } catch (err) {
+      const { code, message, retryable } = classifyJobError(err);
+      const durationMs = Math.round(performance.now() - started);
+      if (retryable && attempt < this.maxJobAttempts) {
+        await repo.requeueJob(job.id, new Date(Date.now() + this.jobLeaseMs), code, message);
+        const msgId = await this.publisher.publishRetry(job.id);
+        await repo.setJobMessageId(job.id, msgId ?? null);
+        logJob("retryable", jobId, { userId: job.userId, attempt, code, durationMs });
+        return { outcome: "retryable", attempt, code };
+      }
+      await repo.markJobFailed(job.id, code, message);
+      logJob("failed", jobId, { userId: job.userId, attempt, code, durationMs });
+      return { outcome: "failed", attempt, code };
+    }
+  }
+
+  private jobInput(job: RoadmapJob): GenerateRoadmapInput | null {
+    if (
+      job.goal == null ||
+      job.level == null ||
+      job.durationWeeks == null ||
+      job.hoursPerWeek == null ||
+      job.language == null
+    ) {
+      return null;
+    }
+    return {
+      goal: job.goal,
+      level: job.level,
+      durationWeeks: job.durationWeeks,
+      hoursPerWeek: job.hoursPerWeek,
+      language: job.language === "th" ? "th" : "en",
+    };
+  }
+
+  /**
+   * The actual generation pipeline. Only runs while this worker owns the
+   * PROCESSING lease for the job.
    */
   private async runGeneration(
     userId: string,
     input: GenerateRoadmapInput,
     repo: RoadmapRepo,
+    attempt: number,
   ): Promise<RoadmapResult> {
-    // [2] skill extraction
-    const skills = extractSkills(input.goal);
-
-    // [3] course retrieval + [4] relevance ranking
+    // [1] course retrieval + [2] relevance ranking (full scored catalog)
     const catalog = await repo.loadCatalog();
-    const ranked = rankAndFilter(catalog, skills, {
-      limit: CATALOG_LIMIT,
+    const ranked = rankAndFilter(catalog, extractSkills(input.goal), {
+      limit: catalog.length, // no top-N cap: the whole scored catalog is offered
       minScore: CATALOG_MIN_SCORE,
     });
-    const candidates: CourseCandidate[] = ranked.map((r) => r.candidate);
+    // Assign opaque, deterministic per-request keys. The LLM references these
+    // keys — never title text — so resolution is immune to duplicate/renamed
+    // titles and hallucinated strings.
+    const candidates: CourseCandidate[] = ranked.map((r, i) => ({
+      ...r.candidate,
+      key: `${CANDIDATE_KEY_PREFIX}-${i + 1}`,
+    }));
 
-    // [5] user progress lookup
+    // [3] user progress lookup
     const progress = await repo.loadProgress(userId);
 
-    // [6] LLM call (only if there is something to sequence)
-    const plan: AIRoadmapPlanRaw = candidates.length
+    // [4] LLM call (only if there is something to sequence). Duration uses a
+    // monotonic clock; usage metadata is captured from the provider result.
+    const skills = extractSkills(input.goal);
+    const started = performance.now();
+    const generated = candidates.length
       ? await this.provider.generateRoadmap(this.buildContext(input, candidates, progress, skills))
-      : this.fallbackPlan(input);
+      : null;
+    const durationMs = candidates.length ? Math.round(performance.now() - started) : null;
+    const plan: AIRoadmapPlanRaw = generated ?? this.fallbackPlan(input);
+    const usage = generated?.usage ?? null;
 
-    // [7] Zod validation of AI output
+    // [5] Zod validation of AI output
     const parsed = aiRoadmapPlanSchema.safeParse(plan);
     if (!parsed.success) {
-      throw new ApiError(
-        502,
-        "Unable to generate your roadmap right now. Please try again.",
-      );
+      throw new ApiError(502, "The AI output did not pass validation. Retrying.");
     }
 
-    // [8] resolve course titles against the REAL catalog (hallucination guard)
+    // [6] resolve candidate keys against the REAL catalog (hallucination guard)
     const normalized = this.resolveAndValidateStages(
       parsed.data.stages,
       candidates,
       input.durationWeeks,
     );
 
-    // [9] persist
+    // [7] persist, together with durable generation metadata.
+    const metadata: RoadmapGenerationMetadata = {
+      provider: usage?.provider ?? null,
+      model: usage?.model ?? null,
+      inputTokens: usage?.inputTokens ?? null,
+      outputTokens: usage?.outputTokens ?? null,
+      totalTokens: usage?.totalTokens ?? null,
+      durationMs,
+      generatedAt: new Date(),
+      usageSource: usage?.usageSource ?? "unavailable",
+      attemptCount: attempt,
+      retryCount: Math.max(0, attempt - 1),
+    };
     return repo.persist({
       userId,
       title: parsed.data.title,
@@ -328,6 +490,9 @@ export class RoadmapService {
       hoursPerWeek: input.hoursPerWeek,
       language: input.language,
       stages: normalized,
+      metadata,
+      // Persist as an unsaved draft; the user reviews it before saving.
+      saved: false,
     });
   }
 
@@ -366,7 +531,7 @@ export class RoadmapService {
           goal: "Explore this topic through external resources.",
           weekStart: 1,
           weekEnd: input.durationWeeks,
-          courseTitle: null,
+          courseKey: null,
           reason: "No matching published EduPro course available.",
           isTopic: true,
         },
@@ -375,22 +540,20 @@ export class RoadmapService {
   }
 
   /**
-   * Resolves each stage's `courseTitle` to a REAL course id from the supplied
-   * candidate set (which came from PostgreSQL). Anything unresolved becomes a
-   * suggested topic. Also enforces week-range invariants.
+   * Resolves each stage's `courseKey` to a REAL course id from the supplied
+   * candidate set (which came from PostgreSQL). Because the key is opaque and
+   * unique, this is deterministic even when titles collide, are renamed, or are
+   * hallucinated by the model. Any unknown/absent key becomes a suggested topic.
+   * Also enforces week-range invariants.
    */
   private resolveAndValidateStages(
     stages: AIRoadmapPlanRaw["stages"],
     candidates: CourseCandidate[],
     durationWeeks: number,
   ): NormalizedStage[] {
-    // Build exact (and lowercased) title index from the REAL catalog only.
-    const byTitle = new Map<string, CourseCandidate>();
-    const byLower = new Map<string, CourseCandidate>();
-    for (const c of candidates) {
-      byTitle.set(c.title, c);
-      byLower.set(c.title.toLowerCase(), c);
-    }
+    // Build a key index from the REAL catalog only.
+    const byKey = new Map<string, CourseCandidate>();
+    for (const c of candidates) byKey.set(c.key, c);
 
     // Renumber strictly 1..N in the order the LLM returned (we trust ordering).
     const normalized: NormalizedStage[] = stages.map((s: AIRoadmapPlanRaw["stages"][number], i: number) => {
@@ -405,16 +568,16 @@ export class RoadmapService {
       let courseReason: string | null = null;
       let isTopic = s.isTopic ?? false;
 
-      if (s.courseTitle) {
-        const exact = byTitle.get(s.courseTitle) ?? byLower.get(s.courseTitle.toLowerCase());
-        if (exact) {
-          // Re-verify it is published & enrollable (catalog only contained those).
-          courseId = exact.id;
-          courseTitle = exact.title;
+      if (s.courseKey) {
+        const match = byKey.get(s.courseKey);
+        if (match) {
+          // Resolved to a real, published, enrollable course row.
+          courseId = match.id;
+          courseTitle = match.title;
           courseReason = s.reason ?? null;
           isTopic = false;
         } else {
-          // AI invent a course that was NOT in the catalog → reject as hallucination.
+          // AI referenced a key that was NOT in the catalog → reject as hallucination.
           courseId = null;
           courseTitle = null;
           courseReason = "No matching EduPro course was found for this stage.";
@@ -440,14 +603,12 @@ export class RoadmapService {
       };
     });
 
-    // Disallow duplicate REAL course references in consecutive order. (The same
-    // course may legitimately appear once; if it appears twice we keep both,
-    // but drop duplicates to avoid confusion.)
+    // Disallow duplicate REAL course references. The same course appearing more
+    // than once is demoted to a topic so we never reference a course twice.
     const seen = new Set<string>();
     return normalized.filter((s) => {
       if (s.courseId) {
         if (seen.has(s.courseId)) {
-          // demote the dupe to a topic so we never reference a course twice
           s.courseId = null;
           s.courseTitle = null;
           s.isTopic = true;
@@ -461,126 +622,197 @@ export class RoadmapService {
   }
 }
 
+function classifyJobError(err: unknown): { code: string; message: string; retryable: boolean } {
+  if (err instanceof ApiError) {
+    if (err.statusCode === 429) {
+      return { code: "provider_rate_limited", message: "The AI provider is rate limited.", retryable: true };
+    }
+    if (err.statusCode === 502) {
+      return { code: "provider_unavailable", message: "The AI provider was temporarily unavailable.", retryable: true };
+    }
+    if (err.statusCode === 400) {
+      return { code: "provider_rejected", message: "The AI provider rejected the request.", retryable: false };
+    }
+    return { code: "generation_failed", message: err.message.slice(0, 200), retryable: false };
+  }
+  return { code: "internal", message: "Unexpected generation error.", retryable: false };
+}
+
+/** Structured, JSON-line logging. Never log stack traces, provider response
+ * bodies, or anything user-sensitive. */
+function logJob(event: string, jobId: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ event: `roadmap.job.${event}`, jobId, ...fields }));
+}
+
 // ---------------------------------------------------------------------------
 // Production repository (Prisma-backed)
 // ---------------------------------------------------------------------------
 
 export class PrismaRoadmapRepo implements RoadmapRepo {
-  async findRecentDuplicate(opts: {
-    userId: string;
-    goal: string;
-    level: RoadmapLevel;
-    durationWeeks: number;
-    hoursPerWeek: number;
-    language: string;
-  }): Promise<ExistingRoadmap | null> {
-    const cutoff = new Date(Date.now() - DUPLICATE_WINDOW_MS);
-    const row = await prisma.roadmap.findFirst({
-      where: {
-        userId: opts.userId,
-        goal: opts.goal,
-        level: opts.level,
-        durationWeeks: opts.durationWeeks,
-        hoursPerWeek: opts.hoursPerWeek,
-        language: opts.language,
-        createdAt: { gte: cutoff },
-      },
-      orderBy: { createdAt: "desc" },
-      include: { items: { orderBy: { stageNumber: "asc" }, include: { course: { select: { title: true } } } } },
+  async getJobByFingerprint(userId: string, fingerprint: string): Promise<RoadmapJob | null> {
+    const row = await prisma.roadmapGeneration.findUnique({
+      where: { userId_fingerprint: { userId, fingerprint } },
     });
-    if (!row) return null;
-    return {
-      id: row.id,
-      title: row.title,
-      goal: row.goal,
-      level: row.level as RoadmapLevel,
-      durationWeeks: row.durationWeeks,
-      hoursPerWeek: row.hoursPerWeek,
-      language: row.language,
-      createdAt: row.createdAt,
-      items: row.items.map((i) => ({
-        id: i.id,
-        stageNumber: i.stageNumber,
-        title: i.title,
-        description: i.description,
-        goal: i.goal,
-        weekStart: i.weekStart,
-        weekEnd: i.weekEnd,
-        courseId: i.courseId,
-        courseTitle: i.course?.title ?? null,
-        courseReason: i.courseReason,
-        status: i.status,
-        isTopic: i.courseId === null,
-      })),
-    } as ExistingRoadmap;
+    return row ? this.toJob(row) : null;
   }
 
-  async claimGeneration(claim: GenerationClaim): Promise<boolean> {
+  async getJobById(jobId: string): Promise<RoadmapJob | null> {
+    const row = await prisma.roadmapGeneration.findUnique({ where: { id: jobId } });
+    return row ? this.toJob(row) : null;
+  }
+
+  async createJob(job: RoadmapJobCreate): Promise<RoadmapJob | null> {
     try {
-      await prisma.roadmapGeneration.create({
+      const row = await prisma.roadmapGeneration.create({
         data: {
-          userId: claim.userId,
-          fingerprint: claim.fingerprint,
-          status: GenerationStatus.GENERATING,
-          expiresAt: claim.expiresAt,
+          userId: job.userId,
+          fingerprint: job.fingerprint,
+          goal: job.goal,
+          level: job.level,
+          durationWeeks: job.durationWeeks,
+          hoursPerWeek: job.hoursPerWeek,
+          language: job.language,
+          status: GenerationStatus.QUEUED,
+          expiresAt: job.expiresAt,
+          attemptCount: 0,
         },
       });
-      return true;
+      return this.toJob(row);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-        return false;
+        return null;
       }
       throw err;
     }
   }
 
-  async resolveGeneration(claim: GenerationClaim): Promise<"acquired" | "busy"> {
-    // 1) steal an expired GENERATING claim (crash recovery). The WHERE guard on
-    // expiresAt keeps this atomic: only one stealer can win.
-    const stolen = await prisma.roadmapGeneration.updateMany({
-      where: {
-        userId: claim.userId,
-        fingerprint: claim.fingerprint,
-        status: GenerationStatus.GENERATING,
-        expiresAt: { lt: new Date() },
-      },
-      data: { expiresAt: claim.expiresAt },
-    });
-    if (stolen.count === 1) return "acquired";
-
-    // 2) clear stale COMPLETED/FAILED rows (enables 24h re-generation) and re-claim.
-    const cleared = await prisma.roadmapGeneration.deleteMany({
-      where: {
-        userId: claim.userId,
-        fingerprint: claim.fingerprint,
-        status: { in: [GenerationStatus.COMPLETED, GenerationStatus.FAILED] },
-      },
-    });
-    if (cleared.count > 0) {
-      const reacquired = await this.claimGeneration(claim);
-      if (reacquired) return "acquired";
-    }
-    return "busy";
-  }
-
-  async markGeneration(
-    claim: Pick<GenerationClaim, "userId" | "fingerprint">,
-    status: "COMPLETED" | "FAILED",
-    roadmapId?: string,
-  ): Promise<void> {
+  async resetFailedJob(userId: string, fingerprint: string): Promise<void> {
     await prisma.roadmapGeneration.updateMany({
-      where: { userId: claim.userId, fingerprint: claim.fingerprint },
+      where: { userId, fingerprint, status: GenerationStatus.FAILED },
       data: {
-        status:
-          status === "COMPLETED"
-            ? GenerationStatus.COMPLETED
-            : GenerationStatus.FAILED,
-        roadmapId: roadmapId ?? null,
+        status: GenerationStatus.QUEUED,
+        attemptCount: 0,
+        lastErrorCode: null,
+        lastError: null,
+        failedAt: null,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
       },
     });
   }
 
-  async loadCatalog(): Promise<CourseCandidate[]> {
+  async claimJob(jobId: string, expiresAt: Date): Promise<boolean> {
+    const res = await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId, status: GenerationStatus.QUEUED },
+      data: {
+        status: GenerationStatus.PROCESSING,
+        expiresAt,
+        attemptCount: { increment: 1 },
+        startedAt: new Date(),
+        lastErrorCode: null,
+        lastError: null,
+      },
+    });
+    return res.count === 1;
+  }
+
+  async stealJob(jobId: string, expiresAt: Date): Promise<boolean> {
+    const res = await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId, status: GenerationStatus.PROCESSING, expiresAt: { lt: new Date() } },
+      data: {
+        status: GenerationStatus.PROCESSING,
+        expiresAt,
+        attemptCount: { increment: 1 },
+        startedAt: new Date(),
+      },
+    });
+    return res.count === 1;
+  }
+
+  async markJobCompleted(jobId: string, roadmapId: string): Promise<void> {
+    await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId },
+      data: {
+        status: GenerationStatus.COMPLETED,
+        roadmapId,
+        completedAt: new Date(),
+        lastErrorCode: null,
+        lastError: null,
+      },
+    });
+  }
+
+  async markJobFailed(jobId: string, code: string, message: string): Promise<void> {
+    await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId },
+      data: { status: GenerationStatus.FAILED, lastErrorCode: code, lastError: message, failedAt: new Date() },
+    });
+  }
+
+  async requeueJob(jobId: string, expiresAt: Date, code: string, message: string): Promise<void> {
+    await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId },
+      data: {
+        status: GenerationStatus.QUEUED,
+        expiresAt,
+        lastErrorCode: code,
+        lastError: message,
+        startedAt: null,
+      },
+    });
+  }
+
+  async setJobMessageId(jobId: string, messageId: string | null): Promise<void> {
+    await prisma.roadmapGeneration.updateMany({
+      where: { id: jobId },
+      data: { qstashMessageId: messageId },
+    });
+  }
+
+  private toJob(row: {
+    id: string;
+    userId: string;
+    fingerprint: string;
+    goal: string | null;
+    level: string | null;
+    durationWeeks: number | null;
+    hoursPerWeek: number | null;
+    language: string | null;
+    status: string;
+    roadmapId: string | null;
+    expiresAt: Date;
+    attemptCount: number;
+    lastErrorCode: string | null;
+    lastError: string | null;
+    qstashMessageId: string | null;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    failedAt: Date | null;
+    createdAt: Date;
+  }): RoadmapJob {
+    return {
+      id: row.id,
+      userId: row.userId,
+      fingerprint: row.fingerprint,
+      goal: row.goal,
+      level: row.level as RoadmapLevel | null,
+      durationWeeks: row.durationWeeks,
+      hoursPerWeek: row.hoursPerWeek,
+      language: row.language,
+      status: row.status as JobStatus,
+      roadmapId: row.roadmapId,
+      expiresAt: row.expiresAt,
+      attemptCount: row.attemptCount,
+      lastErrorCode: row.lastErrorCode,
+      lastError: row.lastError,
+      qstashMessageId: row.qstashMessageId,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      failedAt: row.failedAt,
+      createdAt: row.createdAt,
+    };
+  }
+
+  async loadCatalog(): Promise<Omit<CourseCandidate, "key">[]> {
     const courses = await prisma.course.findMany({
       where: { isPublished: true },
       select: {
@@ -653,6 +885,17 @@ export class PrismaRoadmapRepo implements RoadmapRepo {
         durationWeeks: roadmap.durationWeeks,
         hoursPerWeek: roadmap.hoursPerWeek,
         language: roadmap.language,
+        saved: roadmap.saved,
+        provider: roadmap.metadata.provider,
+        model: roadmap.metadata.model,
+        inputTokens: roadmap.metadata.inputTokens,
+        outputTokens: roadmap.metadata.outputTokens,
+        totalTokens: roadmap.metadata.totalTokens,
+        durationMs: roadmap.metadata.durationMs,
+        generatedAt: roadmap.metadata.generatedAt,
+        usageSource: roadmap.metadata.usageSource,
+        attemptCount: roadmap.metadata.attemptCount,
+        retryCount: roadmap.metadata.retryCount,
         items: {
           create: roadmap.stages.map((s) => ({
             stageNumber: s.stageNumber,
@@ -661,7 +904,6 @@ export class PrismaRoadmapRepo implements RoadmapRepo {
             goal: s.goal,
             weekStart: s.weekStart,
             weekEnd: s.weekEnd,
-            courseId: s.courseId,
             courseReason: s.courseReason,
             status: s.isTopic ? RoadmapItemStatus.SUGGESTED : RoadmapItemStatus.NOT_STARTED,
             course: s.courseId ? { connect: { id: s.courseId } } : undefined,

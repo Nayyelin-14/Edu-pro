@@ -35,7 +35,7 @@ import {
 interface DashboardCounts {
   totalUsers: number;
   totalStudents: number;
-  totalAdmins: number;
+  totalInstructors: number;
   totalCourses: number;
   publishedCourses: number;
   totalEnrollments: number;

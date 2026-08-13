@@ -25,7 +25,7 @@ export async function createAdmin(input: {
       username: input.username,
       email: input.email,
       password,
-      role: "ADMIN",
+      role: "INSTRUCTOR",
       emailVerifiedAt: new Date(),
     },
   });

@@ -187,7 +187,7 @@ export default async function LearningPage({ params, searchParams }: PageProps) 
                       href={`/learning/${courseId}/test/${test.id}`}
                       className="flex items-center gap-4 p-4 border border-border rounded-xl hover:bg-accent transition-colors"
                     >
-                      <div className="w-12 h-12 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                      <div className="w-12 h-12 rounded-lg bg-primary-container/10 text-primary flex items-center justify-center">
                         <FileQuestion className="size-6" />
                       </div>
                       <div>

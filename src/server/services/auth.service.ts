@@ -96,8 +96,14 @@ export async function loginUser(
   input: { username: string; password: string },
   meta?: RequestMeta,
 ): Promise<LoginResult> {
-  const user = await prisma.user.findUnique({
-    where: { username: input.username },
+  // Search by email or username
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: input.username },
+        { username: input.username },
+      ],
+    },
   });
   if (!user) throw unauthorized("Invalid username or password");
   if (user.isBanned) throw forbidden("This account has been suspended");

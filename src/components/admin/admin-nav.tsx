@@ -20,7 +20,7 @@ const items = [
   { href: "/admin/enrollments", label: "Enrollments", icon: TicketCheck },
   { href: "/admin/reports", label: "Reports", icon: Flag },
   { href: "/admin/certificates", label: "Certificates", icon: Award },
-  { href: "/admin/register", label: "Create admin", icon: ShieldPlus },
+  { href: "/admin/register", label: "Create instructor", icon: ShieldPlus },
 ];
 
 export function AdminNav() {

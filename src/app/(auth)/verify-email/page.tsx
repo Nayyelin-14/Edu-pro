@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/hooks/use-auth";
@@ -83,7 +84,11 @@ export default function VerifyEmailPage() {
   };
 
   const goToDashboard = () => {
-    router.push("/profile");
+    if (user?.id) {
+      router.push(`/${user.id}/profile`);
+    } else {
+      router.push("/login");
+    }
     router.refresh();
   };
 
@@ -155,9 +160,9 @@ export default function VerifyEmailPage() {
             {info}
           </div>
         )}
-        <a className="mt-6 text-label-sm font-label-sm text-primary hover:underline" href="/help">
+        <Link className="mt-6 text-label-sm font-label-sm text-primary hover:underline" href="/help">
           Contact Support
-        </a>
+        </Link>
       </div>
     </div>
   );

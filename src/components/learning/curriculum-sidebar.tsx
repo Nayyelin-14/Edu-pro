@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDuration } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 
 interface CurriculumSidebarProps {
   modules: {
@@ -48,6 +49,7 @@ export function CurriculumSidebar({
 }: CurriculumSidebarProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [openModules, setOpenModules] = useState<Record<string, boolean>>(
     modules.reduce((acc, m) => ({ ...acc, [m.id]: true }), {})
@@ -141,7 +143,7 @@ export function CurriculumSidebar({
                           <div className="flex-shrink-0 mt-1">
                             {done ? (
                               <CheckCircle2
-                                className="size-4 text-emerald-500"
+                                className="size-4 text-success"
                                 aria-label="Completed"
                               />
                             ) : locked ? (
@@ -178,7 +180,7 @@ export function CurriculumSidebar({
                         key={quiz.id}
                         href={`/learning/${courseId}?quiz=${quiz.id}`}
                         className={cn(
-                          "flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-amber-600 hover:bg-accent transition-colors group",
+                          "flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-warning hover:bg-accent transition-colors group",
                           currentQuizId === quiz.id && "bg-accent font-medium"
                         )}
                       >
@@ -204,7 +206,7 @@ export function CurriculumSidebar({
               <Link
                 key={test.id}
                 href={`/learning/${courseId}/test/${test.id}`}
-                className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-indigo-600 hover:bg-accent transition-colors"
+                className="flex items-center gap-3 px-2 py-2 rounded-lg text-sm text-primary hover:bg-accent transition-colors"
               >
                 <FileQuestion className="size-4 shrink-0" />
                 <span className="truncate font-medium">{test.title}</span>
@@ -216,7 +218,7 @@ export function CurriculumSidebar({
         {/* Back Link */}
         <div className="border-t border-border pt-4 mt-4">
           <Link
-            href={`/my-courses`}
+            href={`/${user?.id}/my-courses`}
             className="flex items-center justify-center gap-2 w-full border border-border rounded-lg px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
           >
             <ChevronLeft className="size-4" />

@@ -1,10 +1,11 @@
 import { prisma } from "@/lib/prisma";
+import { UserRole } from "@/generated/prisma/enums";
 
 export async function getDashboardStats() {
   const [
     totalUsers,
     totalStudents,
-    totalAdmins,
+      totalInstructors,
     totalCourses,
     publishedCourses,
     totalEnrollments,
@@ -15,7 +16,7 @@ export async function getDashboardStats() {
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { role: "STUDENT" } }),
-    prisma.user.count({ where: { role: { in: ["ADMIN", "SUPERADMIN"] } } }),
+    prisma.user.count({ where: { role: { in: [UserRole.INSTRUCTOR, UserRole.SUPERADMIN] } } }),
     prisma.course.count(),
     prisma.course.count({ where: { isPublished: true } }),
     prisma.enrollment.count(),
@@ -51,7 +52,7 @@ export async function getDashboardStats() {
     counts: {
       totalUsers,
       totalStudents,
-      totalAdmins,
+    totalInstructors,
       totalCourses,
       publishedCourses,
       totalEnrollments,

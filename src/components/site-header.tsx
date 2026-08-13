@@ -7,26 +7,14 @@ import { useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/i18n";
-
-function LocaleSwitcher() {
-  const { locale, setLocale } = useI18n();
-  return (
-    <button
-      onClick={() => setLocale(locale === "en" ? "th" : "en")}
-      aria-label="Switch language"
-      className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container-low hover:text-primary"
-    >
-      <span className="material-symbols-outlined text-sm">language</span>
-    </button>
-  );
-}
+import { LanguageSwitcher } from "./language-switcher";
 
 export function SiteHeader() {
   const { user, logout, loading } = useAuth();
   const { t } = useI18n();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const isStaff = user?.role === "ADMIN" || user?.role === "SUPERADMIN";
+  const isStaff = user?.role === "INSTRUCTOR" || user?.role === "SUPERADMIN";
 
   const links = [
     { href: "/about", label: t.nav.about },
@@ -40,7 +28,10 @@ export function SiteHeader() {
     >
       <div className="mx-auto flex h-navbar-height max-w-container-max items-center justify-between px-margin-mobile md:px-margin-desktop">
         <div className="flex items-center gap-gutter">
-          <Link href="/" className="flex items-center gap-2 text-title-lg font-bold text-primary">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-title-lg font-bold text-primary"
+          >
             <span
               aria-hidden="true"
               className="material-symbols-outlined text-primary"
@@ -52,7 +43,10 @@ export function SiteHeader() {
           </Link>
           <div className="ml-8 hidden gap-6 md:flex">
             {links.map((l) => {
-              const active = l.href === "/about" ? pathname === "/about" : pathname.startsWith(l.href);
+              const active =
+                l.href === "/about"
+                  ? pathname === "/about"
+                  : pathname.startsWith(l.href);
               return (
                 <Link
                   key={l.href}
@@ -71,24 +65,18 @@ export function SiteHeader() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="mr-4 hidden items-center gap-2 md:flex">
-            <button
-              aria-label="Notifications"
-              className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container-low hover:text-primary"
-            >
-              <span className="material-symbols-outlined text-lg">notifications</span>
-            </button>
-            <button
-              aria-label="Search"
-              className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container-low hover:text-primary"
-            >
-              <span className="material-symbols-outlined text-lg">search</span>
-            </button>
-          </div>
+          <button
+            aria-label="Notifications"
+            className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container-low hover:text-primary"
+          >
+            <span className="material-symbols-outlined text-lg">
+              notifications
+            </span>
+          </button>
 
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            <LocaleSwitcher />
+            <LanguageSwitcher />
           </div>
 
           <div className="flex items-center gap-2">
@@ -104,7 +92,7 @@ export function SiteHeader() {
                   </Link>
                 )}
                 <Link
-                  href="/profile"
+                  href={`/${user.id}/profile`}
                   className="hidden px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:block"
                 >
                   {user.username}
@@ -171,7 +159,7 @@ export function SiteHeader() {
                     </Link>
                   )}
                   <Link
-                    href="/profile"
+                    href={`/${user.id}/profile`}
                     onClick={() => setOpen(false)}
                     className="rounded border border-outline px-4 py-2 text-label-md text-on-surface"
                   >

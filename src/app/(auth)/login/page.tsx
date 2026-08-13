@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
+  useEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -11,8 +12,11 @@ import {
   type KeyboardEvent,
 } from "react";
 import { apiFetch } from "@/lib/api-client";
+import { sanitizeReturnTo } from "@/lib/urls";
 import { Alert } from "@/components/ui/alert";
 import { useI18n } from "@/i18n";
+import { useAuth } from "@/hooks/use-auth";
+import { setRememberMe } from "@/lib/remember-me";
 import type { PublicUser } from "@/types/user";
 import { ArrowLeft, Lock, User } from "lucide-react";
 
@@ -129,8 +133,19 @@ function OtpInputs({
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") ?? "/";
+  const { setUser, user, loading: authLoading } = useAuth();
+  const next = sanitizeReturnTo(searchParams.get("next") ?? "/");
   const { t } = useI18n();
+
+  // When an existing (refreshable) session is detected on the login page —
+  // e.g. the access JWT expired while the refresh token is still valid — send
+  // the user straight back to where they were heading instead of showing the
+  // form. `next` is sanitized against open-redirect attackers.
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace(next);
+    }
+  }, [authLoading, user, next, router]);
 
   const [view, setView] = useState<"login" | "mfa">("login");
   const [username, setUsername] = useState("");
@@ -149,6 +164,7 @@ function LoginForm() {
     setInfo("");
     setLoading(true);
     try {
+      setRememberMe(remember);
       const data = await apiFetch<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ username, password, remember }),
@@ -160,6 +176,7 @@ function LoginForm() {
         setView("mfa");
         return;
       }
+      if (data.user) setUser(data.user);
       router.push(next);
       router.refresh();
     } catch (err) {
@@ -176,10 +193,14 @@ function LoginForm() {
     setInfo("");
     setLoading(true);
     try {
-      await apiFetch<{ user: PublicUser }>("/api/auth/verify-otp", {
-        method: "POST",
-        body: JSON.stringify({ token: mfaToken, code }),
-      });
+      const { user } = await apiFetch<{ user: PublicUser }>(
+        "/api/auth/verify-otp",
+        {
+          method: "POST",
+          body: JSON.stringify({ token: mfaToken, code }),
+        },
+      );
+      setUser(user);
       router.push(next);
       router.refresh();
     } catch (err) {
@@ -194,6 +215,7 @@ function LoginForm() {
     setInfo("");
     setLoading(true);
     try {
+      setRememberMe(remember);
       const data = await apiFetch<LoginResponse>("/api/auth/login", {
         method: "POST",
         body: JSON.stringify({ username, password, remember }),

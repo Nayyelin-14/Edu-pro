@@ -9,7 +9,7 @@ export const createAdminSchema = z.object({
 });
 
 export const updateUserSchema = z.object({
-  role: z.enum(["STUDENT", "ADMIN", "SUPERADMIN"]).optional(),
+  role: z.enum(["STUDENT", "INSTRUCTOR", "SUPERADMIN"]).optional(),
   isBanned: z.boolean().optional(),
 });
 

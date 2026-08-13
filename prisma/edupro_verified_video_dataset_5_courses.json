@@ -1,0 +1,167 @@
+[
+  {
+    "course_title": "Python Programming",
+    "module_name": "Python Safety & Dependencies",
+    "lesson_title": "Making Python Safer",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2311-making-python-safer-than-ever/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2218a/fosdem-2024-2311-making-python-safer-than-ever.mp4",
+    "duration_seconds": 1500,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Python Programming",
+    "module_name": "Modern Python",
+    "lesson_title": "Pattern Matching with Python",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-1996-match-all-things-python-parsing-structured-content-with-python-s-new-match-statement/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2218a/fosdem-2024-1996-match-all-things-python-parsing-structured-content-with-python-s-new-match-statement.mp4",
+    "duration_seconds": 1500,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Python Programming",
+    "module_name": "Python Debugging",
+    "lesson_title": "Python 3.12 Monitoring and Debugging API",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-1678-python-3-12-s-new-monitoring-and-debugging-api/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2218a/fosdem-2024-1678-python-3-12-s-new-monitoring-and-debugging-api.mp4",
+    "duration_seconds": 1500,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "JavaScript & Web Development",
+    "module_name": "JavaScript Runtime",
+    "lesson_title": "Understanding the JavaScript Event Loop",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2890-unraveling-javascript-s-heart-mastering-the-event-loop-for-peak-performance/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/h1301/fosdem-2024-2890-unraveling-javascript-s-heart-mastering-the-event-loop-for-peak-performance.mp4",
+    "duration_seconds": 1800,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "JavaScript & Web Development",
+    "module_name": "Web Security",
+    "lesson_title": "JavaScript Security Fundamentals",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2779-staying-ahead-of-the-game-javascript-security/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/h1301/fosdem-2024-2779-staying-ahead-of-the-game-javascript-security.mp4",
+    "duration_seconds": 1800,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "JavaScript & Web Development",
+    "module_name": "Web Performance",
+    "lesson_title": "Fast JavaScript with Data-Oriented Design",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2773-fast-javascript-with-data-oriented-design/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/h2214/fosdem-2024-2773-fast-javascript-with-data-oriented-design.mp4",
+    "duration_seconds": 1500,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "SQL & PostgreSQL",
+    "module_name": "SQL Concurrency",
+    "lesson_title": "Isolation Levels and MVCC",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3600-isolation-levels-and-mvcc-in-sql-databases-a-technical-comparative-study/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2120/fosdem-2024-3600-isolation-levels-and-mvcc-in-sql-databases-a-technical-comparative-study.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "SQL & PostgreSQL",
+    "module_name": "PostgreSQL Data Modeling",
+    "lesson_title": "Data Modeling for PostgreSQL Performance",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3601-reducing-costs-and-improving-performance-with-data-modeling-in-postgres/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2120/fosdem-2024-3601-reducing-costs-and-improving-performance-with-data-modeling-in-postgres.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "SQL & PostgreSQL",
+    "module_name": "Database Security",
+    "lesson_title": "Roles, Privileges and Security in PostgreSQL",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3603-for-your-eyes-only-roles-privileges-and-security-in-postgresql/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ud2120/fosdem-2024-3603-for-your-eyes-only-roles-privileges-and-security-in-postgresql.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Git & Version Control",
+    "module_name": "Git Deep Dive",
+    "lesson_title": "Advanced Git Tips and Tricks",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3611-so-you-think-you-know-git/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/k1105/fosdem-2024-3611-so-you-think-you-know-git.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Git & Version Control",
+    "module_name": "Distributed Version Control",
+    "lesson_title": "Version Control Beyond Git",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3423-version-control-post-git/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/k1105/fosdem-2024-3423-version-control-post-git.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Git & Version Control",
+    "module_name": "Reproducible Development",
+    "lesson_title": "Reproducible Builds",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-3353-reproducible-builds-the-first-ten-years/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/k1105/fosdem-2024-3353-reproducible-builds-the-first-ten-years.mp4",
+    "duration_seconds": 3000,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Open Source AI & Machine Learning",
+    "module_name": "AI Foundations",
+    "lesson_title": "Introduction to Open Source AI",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2485-an-introduction-to-open-source-ai/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ub2252a/fosdem-2024-2485-an-introduction-to-open-source-ai.mp4",
+    "duration_seconds": 1800,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Open Source AI & Machine Learning",
+    "module_name": "Large Language Models",
+    "lesson_title": "Building Open Source Language Models",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2591-building-open-source-language-models/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ub2252a/fosdem-2024-2591-building-open-source-language-models.mp4",
+    "duration_seconds": 900,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  },
+  {
+    "course_title": "Open Source AI & Machine Learning",
+    "module_name": "LLM Applications",
+    "lesson_title": "LangChain From 0 to 1",
+    "source_page": "https://archive.fosdem.org/2024/schedule/event/fosdem-2024-2384-langchain-from-0-to-1-unveiling-the-power-of-llm-programming/",
+    "direct_mp4_url": "https://video.fosdem.org/2024/ub2252a/fosdem-2024-2384-langchain-from-0-to-1-unveiling-the-power-of-llm-programming.mp4",
+    "duration_seconds": 1800,
+    "license_name": "CC BY 2.0 Belgium",
+    "commercial_rehost_allowed": true,
+    "attribution_required": true
+  }
+]

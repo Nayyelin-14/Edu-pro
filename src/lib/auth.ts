@@ -9,7 +9,6 @@ import { verifyAccessToken } from "./jwt";
 export const ACCESS_COOKIE = "access_token";
 export const REFRESH_COOKIE = "refresh_token";
 
-const ACCESS_TTL_SECONDS = Number(process.env.JWT_ACCESS_TTL) || 900;
 const REFRESH_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS) || 7;
 export const REFRESH_TTL_MS = REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000;
 
@@ -42,12 +41,19 @@ export function setAuthCookies(
   remember: boolean,
 ): NextResponse {
   const secure = isProd();
+  // The access JWT itself is short-lived (JWT_ACCESS_TTL, 15 min by default),
+  // but the cookie that carries it must outlive the JWT. Otherwise the browser
+  // deletes the cookie after 15 min and the middleware can no longer tell a
+  // "session that can still be refreshed" apart from "fully logged out" — which
+  // would force a re-login despite a valid refresh token. Everywhere else the
+  // JWT is what gates access, so a stale cookie is harmless.
+  const accessMaxAge = remember ? Math.floor(REFRESH_TTL_MS / 1000) : undefined;
   res.cookies.set(ACCESS_COOKIE, accessToken, {
     httpOnly: true,
     secure,
     sameSite: "lax",
     path: "/",
-    maxAge: ACCESS_TTL_SECONDS,
+    ...(accessMaxAge !== undefined ? { maxAge: accessMaxAge } : {}),
   });
   res.cookies.set(REFRESH_COOKIE, refreshToken, {
     httpOnly: true,

@@ -28,9 +28,12 @@ export async function requireVerified(user: User): Promise<User> {
   return user;
 }
 
-/** Requires any staff role (ADMIN or SUPERADMIN). */
+/** Requires any staff role (INSTRUCTOR or SUPERADMIN). */
 export async function requireStaff(user: User): Promise<User> {
-  if (user.role !== UserRole.ADMIN && user.role !== UserRole.SUPERADMIN) {
+  if (
+    user.role !== UserRole.INSTRUCTOR &&
+    user.role !== UserRole.SUPERADMIN
+  ) {
     throw forbidden("Admin access required");
   }
   return user;
@@ -45,7 +48,10 @@ export async function requireSuperAdmin(user: User): Promise<User> {
 }
 
 export function isStaff(user: User): boolean {
-  return user.role === UserRole.ADMIN || user.role === UserRole.SUPERADMIN;
+  return (
+    user.role === UserRole.INSTRUCTOR ||
+    user.role === UserRole.SUPERADMIN
+  );
 }
 
 export function isAdminOrHigher(user: User): boolean {

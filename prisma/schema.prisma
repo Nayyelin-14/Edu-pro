@@ -50,7 +50,8 @@ enum RoadmapItemStatus {
 }
 
 enum GenerationStatus {
-  GENERATING
+  QUEUED
+  PROCESSING
   COMPLETED
   FAILED
 }
@@ -426,9 +427,34 @@ model Roadmap {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
+  // Durable AI generation metadata. Every field is nullable: for legacy rows
+  // (or when a provider reports nothing) the UI shows "Not available", never 0.
+  provider      String?
+  model         String?
+  inputTokens   Int?
+  outputTokens  Int?
+  totalTokens   Int?
+  durationMs    Int?
+  generatedAt   DateTime?
+  usageSource   UsageSource?
+  attemptCount  Int?
+  retryCount    Int?
+
+  // Draft lifecycle: generation persists the roadmap as an unsaved draft
+  // (saved=false) so the user can review it before committing. Only saved
+  // roadmaps appear in the "My roadmaps" list.
+  saved    Boolean   @default(true)
+  savedAt  DateTime?
+
   items RoadmapItem[]
 
   @@index([userId, createdAt])
+}
+
+enum UsageSource {
+  provider_reported
+  calculated
+  unavailable
 }
 
 model RoadmapItem {
@@ -458,10 +484,25 @@ model RoadmapGeneration {
   user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   // SHA-256 of userId|goal|level|durationWeeks|hoursPerWeek|language.
   fingerprint String
-  status      GenerationStatus @default(GENERATING)
+  // Generation input snapshot so the worker is self-contained (jobId only).
+  goal        String?
+  level       RoadmapLevel?
+  durationWeeks Int?
+  hoursPerWeek  Int?
+  language    String?
+  status      GenerationStatus @default(QUEUED)
   roadmapId   String?
-  // Lease: a GENERATING claim is stealable once expiresAt passes (crash safety).
+  // Lease: a PROCESSING job is reclaimable once expiresAt passes (crash safety).
   expiresAt   DateTime
+  attemptCount Int             @default(0)
+  // Redacted failure diagnostics (never a stack trace or provider response).
+  lastErrorCode String?
+  lastError     String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  failedAt    DateTime?
+  // Upstash QStash message id used to publish the worker invocation.
+  qstashMessageId String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 

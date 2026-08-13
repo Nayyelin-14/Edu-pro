@@ -2,16 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
 const encoder = new TextEncoder();
-const STAFF = new Set(["ADMIN", "SUPERADMIN"]);
+const STAFF = new Set(["INSTRUCTOR", "SUPERADMIN"]);
 
-const USER_PREFIXES = [
-  "/learning",
-  "/profile",
-  "/saved",
-  "/reports",
-  "/my-courses",
-  "/certificates",
-];
+const USER_PREFIXES = ["/learning"];
+const USER_SUFFIX_RE =
+  /^\/[^/]+\/(profile|my-courses|saved|certificates|reports|roadmap)(\/|$)/;
 const STAFF_PREFIXES = ["/admin"];
 const AUTH_PAGES = new Set([
   "/login",
@@ -20,18 +15,38 @@ const AUTH_PAGES = new Set([
   "/reset-password",
 ]);
 
-async function getSession(
-  req: NextRequest,
-): Promise<{ role: string } | null> {
+interface SessionCheck {
+  valid: boolean;
+  role: string | null;
+  hasAccessCookie: boolean;
+}
+
+/**
+ * The access JWT expires after 15 min, but the cookie that carries it outlives
+ * the JWT (up to the refresh session lifetime). A present-but-unverifiable
+ * cookie therefore means "this session may still be refreshable via the refresh
+ * token" — NOT "fully logged out". Only the absence of the cookie is definitive,
+ * because a logged-out browser has neither cookie.
+ */
+async function getSession(req: NextRequest): Promise<SessionCheck> {
   const token = req.cookies.get("access_token")?.value;
   const secret = process.env.JWT_ACCESS_SECRET;
-  if (!token || !secret) return null;
+  if (!token) return { valid: false, role: null, hasAccessCookie: false };
+  if (!secret) return { valid: false, role: null, hasAccessCookie: true };
   try {
     const { payload } = await jwtVerify(token, encoder.encode(secret));
-    if (!payload.sub) return null;
-    return { role: String(payload.role ?? "STUDENT") };
+    if (!payload.sub) return { valid: false, role: null, hasAccessCookie: true };
+    return {
+      valid: true,
+      role: String(payload.role ?? "STUDENT"),
+      hasAccessCookie: true,
+    };
   } catch {
-    return null;
+    // Expired/invalid JWT. Let the request through: the client rotates the
+    // session via /api/auth/refresh (which the refresh cookie reaches) and
+    // retries. If refresh also fails, the client redirects to /login with the
+    // original destination in `next`.
+    return { valid: false, role: null, hasAccessCookie: true };
   }
 }
 
@@ -45,22 +60,22 @@ function redirectTo(req: NextRequest, path: string, next?: string): NextResponse
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const session = await getSession(req);
-  const isStaff = session ? STAFF.has(session.role) : false;
+  const isStaff = session.valid ? STAFF.has(session.role ?? "") : false;
 
   if (STAFF_PREFIXES.some((p) => pathname.startsWith(p))) {
-    if (!session) return redirectTo(req, "/login", pathname);
-    if (!isStaff) return redirectTo(req, "/");
+    if (!session.hasAccessCookie) return redirectTo(req, "/login", pathname);
+    if (session.valid && !isStaff) return redirectTo(req, "/");
   }
 
-  if (USER_PREFIXES.some((p) => pathname.startsWith(p))) {
-    if (pathname.startsWith("/certificates/verify")) {
-      return NextResponse.next();
-    }
-    if (!session) return redirectTo(req, "/login", pathname);
+  if (
+    USER_PREFIXES.some((p) => pathname.startsWith(p)) ||
+    USER_SUFFIX_RE.test(pathname)
+  ) {
+    if (!session.hasAccessCookie) return redirectTo(req, "/login", pathname);
   }
 
   if (AUTH_PAGES.has(pathname)) {
-    if (session) return redirectTo(req, "/");
+    if (session.valid) return redirectTo(req, "/");
   }
 
   return NextResponse.next();

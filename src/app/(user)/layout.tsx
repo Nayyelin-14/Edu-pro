@@ -1,5 +1,6 @@
 import { UserNav } from "@/components/user-nav";
 import { UserTopAppBar } from "@/components/user-top-app-bar";
+import { MobileBottomNav } from "@/components/user/mobile-bottom-nav";
 
 export const metadata = {
   title: "My account",
@@ -13,18 +14,19 @@ export default function UserLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen bg-surface overflow-hidden">
-      <aside className="hidden md:flex fixed left-0 top-0 h-screen w-sidebar-width z-40 border-r border-outline-variant bg-surface flex-col">
+    <div className="min-h-screen bg-surface">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-sidebar-width border-r border-outline-variant bg-surface md:block">
         <UserNav />
       </aside>
-      <main className="flex-grow flex flex-col md:ml-sidebar-width min-w-0">
+      <div className="flex min-h-screen flex-col md:ml-sidebar-width">
         <UserTopAppBar />
-        <div className="flex-grow pt-navbar-height md:pt-0 overflow-y-auto">
-          <div className="max-w-container-max mx-auto p-margin-mobile md:p-margin-desktop w-full">
+        <main className="flex-1 pb-24 md:pb-0">
+          <div className="mx-auto w-full max-w-container-max p-margin-mobile md:p-margin-desktop">
             {children}
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
+      <MobileBottomNav />
     </div>
   );
 }

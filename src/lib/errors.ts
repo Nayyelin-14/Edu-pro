@@ -36,3 +36,15 @@ export function tooMany(message = "Too many requests"): ApiError {
 export function unprocessable(message = "Unprocessable entity"): ApiError {
   return new ApiError(422, message);
 }
+
+export function payloadTooLarge(message = "Request body too large"): ApiError {
+  return new ApiError(413, message);
+}
+
+export function serviceUnavailable(message = "Service unavailable"): ApiError {
+  return new ApiError(503, message);
+}
+
+export function badGateway(message = "Bad gateway"): ApiError {
+  return new ApiError(502, message);
+}
