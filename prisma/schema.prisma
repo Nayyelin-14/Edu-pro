@@ -16,7 +16,7 @@ datasource db {
 
 enum UserRole {
   STUDENT
-  ADMIN
+  INSTRUCTOR
   SUPERADMIN
 }
 
@@ -47,6 +47,12 @@ enum RoadmapItemStatus {
   NOT_STARTED
   IN_PROGRESS
   COMPLETED
+}
+
+enum GenerationStatus {
+  GENERATING
+  COMPLETED
+  FAILED
 }
 
 enum ReportStatus {
@@ -88,6 +94,8 @@ model User {
   wishlistItems  WishlistItem[]
   certificates   Certificate[]
   reportsFiled   Report[]      @relation("Reporter")
+  roadmaps       Roadmap[]
+  roadmapGenerations RoadmapGeneration[]
 
   @@index([role])
 }
@@ -176,6 +184,7 @@ model Course {
   tests         Test[]
   certificates  Certificate[]
   reports       Report[]
+  roadmapItems  RoadmapItem[]
 
   @@index([isPublished, createdAt])
   @@index([categoryId])
@@ -402,4 +411,61 @@ model Report {
 
   @@index([status])
   @@index([courseId])
+}
+
+model Roadmap {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  goal          String
+  level         RoadmapLevel
+  durationWeeks Int
+  hoursPerWeek  Int
+  language      String         @default("en")
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  items RoadmapItem[]
+
+  @@index([userId, createdAt])
+}
+
+model RoadmapItem {
+  id           String            @id @default(cuid())
+  roadmapId    String
+  roadmap      Roadmap           @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  stageNumber  Int
+  title        String
+  description  String?
+  goal         String?
+  weekStart    Int
+  weekEnd      Int
+  courseId     String?
+  course       Course?           @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  courseReason String?
+  status       RoadmapItemStatus @default(NOT_STARTED)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([roadmapId, stageNumber])
+  @@index([courseId])
+}
+
+model RoadmapGeneration {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SHA-256 of userId|goal|level|durationWeeks|hoursPerWeek|language.
+  fingerprint String
+  status      GenerationStatus @default(GENERATING)
+  roadmapId   String?
+  // Lease: a GENERATING claim is stealable once expiresAt passes (crash safety).
+  expiresAt   DateTime
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([userId, fingerprint])
+  @@index([userId])
+  @@index([status])
 }
