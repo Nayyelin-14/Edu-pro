@@ -3,24 +3,26 @@ import { forbidden, notFound } from "@/lib/errors";
 import { fromJson } from "@/lib/json";
 import type { QuestionShape } from "@/types/content";
 import { toQuestionView } from "@/types/content";
+import type { TenantContext } from "@/server/tenant-context";
 import { isEnrolled } from "./enrollment.service";
-import { issueCertificateForTestPass } from "./certificate.service";
 
 interface AnswerInput {
   questionId: string;
   selected: number;
 }
 
-export async function startTest(userId: string, testId: string) {
-  const test = await prisma.test.findUnique({
-    where: { id: testId },
+export async function startTest(ctx: TenantContext, testId: string) {
+  const userId = ctx.user.id;
+  // Tenant-scoped test lookup: cross-tenant test ids resolve as "not found".
+  const test = await prisma.test.findFirst({
+    where: { id: testId, tenantId: ctx.tenant.id },
     include: { course: { select: { id: true, isPublished: true } } },
   });
   if (!test || !test.isEnabled) throw notFound("Test not found");
   if (!test.course.isPublished) throw notFound("Course not found");
-  const enrolled = await isEnrolled(userId, test.courseId);
+  const enrolled = await isEnrolled(userId, test.courseId, ctx.tenant.id);
   if (!enrolled) throw notFound("Enroll in the course first");
-  await assertAttemptsAvailable(userId, test);
+  await assertAttemptsAvailable(userId, test, ctx.tenant.id);
 
   const questions = fromJson<QuestionShape[]>(test.questions).map(toQuestionView);
   return {
@@ -37,14 +39,20 @@ export async function startTest(userId: string, testId: string) {
   };
 }
 
-export async function getTestStatus(userId: string, testId: string) {
-  const test = await prisma.test.findUnique({
-    where: { id: testId },
-    select: { id: true, title: true, attemptLimit: true, passingScore: true },
+export async function getTestStatus(ctx: TenantContext, testId: string) {
+  const test = await prisma.test.findFirst({
+    where: { id: testId, tenantId: ctx.tenant.id },
+    select: {
+      id: true,
+      title: true,
+      attemptLimit: true,
+      passingScore: true,
+      timeLimitMinutes: true,
+    },
   });
   if (!test) throw notFound("Test not found");
   const results = await prisma.testResult.findMany({
-    where: { testId, userId },
+    where: { testId, userId: ctx.user.id, tenantId: ctx.tenant.id },
     orderBy: { submittedAt: "desc" },
   });
   return {
@@ -55,16 +63,17 @@ export async function getTestStatus(userId: string, testId: string) {
 }
 
 export async function submitTest(
-  userId: string,
+  ctx: TenantContext,
   testId: string,
   answers: AnswerInput[],
   startedAt?: string,
 ) {
-  const test = await prisma.test.findUnique({ where: { id: testId } });
+  const userId = ctx.user.id;
+  const test = await prisma.test.findFirst({ where: { id: testId, tenantId: ctx.tenant.id } });
   if (!test || !test.isEnabled) throw notFound("Test not found");
-  const enrolled = await isEnrolled(userId, test.courseId);
+  const enrolled = await isEnrolled(userId, test.courseId, ctx.tenant.id);
   if (!enrolled) throw notFound("Enroll in the course first");
-  await assertAttemptsAvailable(userId, test);
+  await assertAttemptsAvailable(userId, test, ctx.tenant.id);
 
   const questions = fromJson<QuestionShape[]>(test.questions);
   const byId = new Map(questions.map((q) => [q.id, q]));
@@ -94,6 +103,7 @@ export async function submitTest(
     data: {
       testId,
       userId,
+      tenantId: ctx.tenant.id,
       score,
       total,
       percent,
@@ -104,21 +114,6 @@ export async function submitTest(
     },
   });
 
-  let certificate: { id: string; number: string; pdfUrl: string | null } | null =
-    null;
-  if (passed) {
-    const issued = await issueCertificateForTestPass(
-      userId,
-      test.courseId,
-      result.id,
-    );
-    certificate = {
-      id: issued.id,
-      number: issued.certificateNumber,
-      pdfUrl: issued.pdfUrl,
-    };
-  }
-
   return {
     result: {
       id: result.id,
@@ -128,15 +123,19 @@ export async function submitTest(
       passed,
       timeTakenSeconds,
     },
-    certificate,
+    // Certificates are no longer auto-issued. The student must request one and
+    // the course instructor decides whether to issue it.
+    certificate: null,
+    eligible: passed,
   };
 }
 
 async function assertAttemptsAvailable(
   userId: string,
   test: { id: string; attemptLimit: number },
+  tenantId: string,
 ): Promise<void> {
-  const count = await prisma.testResult.count({ where: { testId: test.id, userId } });
+  const count = await prisma.testResult.count({ where: { testId: test.id, userId, tenantId } });
   if (count >= test.attemptLimit) {
     throw forbidden("Attempt limit reached for this test");
   }

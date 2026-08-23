@@ -1,12 +1,22 @@
 import type { User } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { OtpPurpose, TWO_STEP } from "@/generated/prisma/enums";
 import type { PublicUser } from "@/lib/auth";
 import { REFRESH_TTL_MS, publicUser } from "@/lib/auth";
-import { sha256, randomOpaqueToken } from "@/lib/crypto";
+import { bestEffort } from "@/lib/async";
+import { sha256, randomOpaqueToken, decryptSecret } from "@/lib/crypto";
 import { sendLoginOtpEmail, sendVerificationEmail } from "@/lib/email";
-import { badRequest, conflict, forbidden, unauthorized } from "@/lib/errors";
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  internal,
+  serviceUnavailable,
+  unauthorized,
+} from "@/lib/errors";
 import { signAccessToken, signMfaToken, verifyMfaToken } from "@/lib/jwt";
 import { issueOtp, verifyOtp } from "@/lib/otp";
+import { logError } from "@/lib/logger";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
 import { verifyTotp } from "@/lib/totp";
@@ -47,6 +57,14 @@ async function issueRefreshToken(
   return token;
 }
 
+/** Revokes every active refresh token for a user (used on replay detection). */
+export async function revokeAllRefreshTokens(userId: string): Promise<void> {
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+}
+
 async function buildAuthTokens(
   user: User,
   meta?: RequestMeta,
@@ -80,15 +98,56 @@ export async function registerUser(input: {
     );
   }
   const password = await hashPassword(input.password);
-  const user = await prisma.user.create({
-    data: {
-      username: input.username,
-      email: input.email,
-      password,
-    },
+  let user: User;
+  try {
+    user = await prisma.user.create({
+      data: {
+        username: input.username,
+        email: input.email,
+        password,
+      },
+    });
+  } catch (err) {
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      const target = Array.isArray(err.meta?.target)
+        ? err.meta.target
+        : [err.meta?.target];
+      throw conflict(
+        target.includes("email")
+          ? "Email is already registered"
+          : "Username is already in use",
+      );
+    }
+    throw err;
+  }
+  const defaultTenant = await prisma.tenant.findUnique({
+    where: { slug: process.env.DEFAULT_TENANT_SLUG || "default" },
+    select: { id: true },
   });
   const code = await issueOtp(user.id, OtpPurpose.EMAIL_VERIFICATION);
-  await sendVerificationEmail(user.email, code);
+  // The account is already committed; a failed verification email must not
+  // surface as a registration error (the user can resend the code).
+  await bestEffort("email.verification", sendVerificationEmail(user.email, code));
+  // TENANT ONBOARDING: self-registered learners join the open default tenant
+  // (slug from DEFAULT_TENANT_SLUG, seeded as "default") with STUDENT
+  // authority. All other tenants remain strictly membership-gated; if the
+  // default tenant does not exist the user simply has no tenant access yet.
+  if (defaultTenant) {
+    // Synchronous (not bestEffort): the learner's very next request may
+    // already be a tenant-scoped operation that requires this row.
+    await prisma.tenantMembership
+      .upsert({
+        where: {
+          userId_tenantId: { userId: user.id, tenantId: defaultTenant.id },
+        },
+        update: {},
+        create: { userId: user.id, tenantId: defaultTenant.id, role: "STUDENT" },
+      })
+      .catch(() => {});
+  }
   return publicUser(user);
 }
 
@@ -113,7 +172,13 @@ export async function loginUser(
 
   if (user.twoStep === TWO_STEP.EMAIL) {
     const code = await issueOtp(user.id, OtpPurpose.LOGIN);
-    await sendLoginOtpEmail(user.email, code);
+    // The code is the only way in — surface a clear error when it cannot be
+    // delivered instead of a raw provider failure.
+    if (!(await bestEffort("email.login_otp", sendLoginOtpEmail(user.email, code)))) {
+      throw serviceUnavailable(
+        "Could not send your login code. Please try again in a minute.",
+      );
+    }
     return {
       needsTwoFactor: true,
       method: "EMAIL",
@@ -145,7 +210,13 @@ export async function completeLoginWithOtp(
   if (user.twoStep === TWO_STEP.EMAIL) {
     await verifyOtp(user.id, OtpPurpose.LOGIN, input.code);
   } else if (user.twoStep === TWO_STEP.GOOGLE_AUTH) {
-    if (!user.twoStepSecret || !verifyTotp(user.twoStepSecret, input.code)) {
+    let secret: string;
+    try {
+      secret = decryptSecret(user.twoStepSecret ?? "");
+    } catch {
+      throw internal("Two-step verification is temporarily unavailable");
+    }
+    if (!secret || !verifyTotp(secret, input.code)) {
       throw badRequest("Invalid code");
     }
   } else {
@@ -163,15 +234,23 @@ export async function refreshTokens(
     where: { tokenHash: sha256(refreshTokenValue) },
     include: { user: true },
   });
-  if (!record || record.revokedAt || record.expiresAt < new Date()) {
+  if (!record || record.expiresAt < new Date()) {
     throw unauthorized("Session expired");
   }
   if (record.user.isBanned) throw forbidden("This account has been suspended");
 
-  await prisma.refreshToken.update({
-    where: { id: record.id },
+  const consumed = await prisma.refreshToken.updateMany({
+    where: { id: record.id, revokedAt: null },
     data: { revokedAt: new Date() },
   });
+  if (consumed.count === 0) {
+    logError(
+      new Error("Refresh token reuse detected — revoking all active sessions"),
+      { method: "refresh", userId: record.user.id },
+    );
+    await revokeAllRefreshTokens(record.user.id);
+    throw unauthorized("Session expired");
+  }
   const refreshToken = await issueRefreshToken(record.user.id, meta);
   const accessToken = await signAccessToken({
     userId: record.user.id,

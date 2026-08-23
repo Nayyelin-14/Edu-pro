@@ -1,7 +1,7 @@
 "use client";
 
-import ProfileHub from "./profile-hub";
+import DashboardHub from "../dashboard/dashboard-hub";
 
 export default function ProfilePage() {
-  return <ProfileHub />;
+  return <DashboardHub />;
 }

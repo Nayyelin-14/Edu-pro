@@ -1,8 +1,10 @@
 import type { User } from "@/generated/prisma/client";
 import { OtpPurpose, TWO_STEP } from "@/generated/prisma/enums";
 import { sendLoginOtpEmail } from "@/lib/email";
-import { badRequest } from "@/lib/errors";
+import { bestEffort } from "@/lib/async";
+import { badRequest, internal, serviceUnavailable } from "@/lib/errors";
 import { issueOtp, verifyOtp } from "@/lib/otp";
+import { encryptSecret } from "@/lib/crypto";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
 import { generateTotpSecret, provisioningUri, verifyTotp } from "@/lib/totp";
@@ -16,7 +18,11 @@ export async function initEnableTwoStep(
 > {
   if (method === "EMAIL") {
     const code = await issueOtp(user.id, OtpPurpose.TWO_FACTOR);
-    await sendLoginOtpEmail(user.email, code);
+    if (!(await bestEffort("email.login_otp", sendLoginOtpEmail(user.email, code)))) {
+      throw serviceUnavailable(
+        "Could not send your verification code. Please try again in a minute.",
+      );
+    }
     return { pending: true, method: "EMAIL" };
   }
   const secret = generateTotpSecret();
@@ -47,11 +53,18 @@ export async function confirmEnableTwoStep(
   if (!input.totpSecret || !verifyTotp(input.totpSecret, input.code)) {
     throw badRequest("Invalid code");
   }
+  let storedSecret: string;
+  try {
+    storedSecret = encryptSecret(input.totpSecret);
+  } catch {
+    // Fail closed: never persist a 2FA secret in plaintext.
+    throw internal("Two-step verification is temporarily unavailable");
+  }
   await prisma.user.update({
     where: { id: user.id },
     data: {
       twoStep: TWO_STEP.GOOGLE_AUTH,
-      twoStepSecret: input.totpSecret,
+      twoStepSecret: storedSecret,
     },
   });
   return { twoStep: TWO_STEP.GOOGLE_AUTH };

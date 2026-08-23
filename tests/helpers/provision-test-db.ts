@@ -10,7 +10,30 @@ import { join } from "node:path";
 import { Client } from "pg";
 import { getTestAdminUrl } from "./setup-test-env";
 
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 5_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function provisionFreshTestDatabase(): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await provisionOnce();
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function provisionOnce(): Promise<void> {
   const admin = new Client({ connectionString: getTestAdminUrl() });
   await admin.connect();
   try {

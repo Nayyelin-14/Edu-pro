@@ -3,7 +3,7 @@ import { conflict } from "@/lib/errors";
 
 export async function updateProfile(
   userId: string,
-  input: { username?: string; avatar?: string },
+  input: { username?: string; avatar?: string | null },
 ) {
   if (input.username) {
     const existing = await prisma.user.findUnique({
@@ -23,10 +23,11 @@ export async function updateProfile(
   });
 }
 
-export async function getUserScores(userId: string) {
+/** TENANT-MODE scores: `tenantId` comes from the caller's TenantContext. */
+export async function getUserScores(userId: string, tenantId: string) {
   const [quizResults, testResults] = await Promise.all([
     prisma.quizResult.findMany({
-      where: { userId },
+      where: { userId, tenantId },
       include: {
         quiz: {
           select: {
@@ -39,7 +40,7 @@ export async function getUserScores(userId: string) {
       orderBy: { createdAt: "desc" },
     }),
     prisma.testResult.findMany({
-      where: { userId },
+      where: { userId, tenantId },
       include: {
         test: { select: { id: true, title: true, course: { select: { id: true, title: true } } } },
       },

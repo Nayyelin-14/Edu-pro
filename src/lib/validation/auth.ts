@@ -65,3 +65,13 @@ export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: passwordSchema,
 });
+
+export const profileUpdateSchema = z
+  .object({
+    username: usernameSchema.optional(),
+    avatar: z.string().url("Invalid avatar URL").max(2048).nullable().optional(),
+  })
+  .strict()
+  .refine((v) => v.username !== undefined || v.avatar !== undefined, {
+    message: "Nothing to update",
+  });

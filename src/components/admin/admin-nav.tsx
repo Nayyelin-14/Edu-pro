@@ -12,26 +12,52 @@ import {
   Flag,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
 
 const items = [
-  { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/users", label: "Users", icon: Users },
-  { href: "/admin/courses", label: "Courses", icon: BookOpen },
-  { href: "/admin/enrollments", label: "Enrollments", icon: TicketCheck },
-  { href: "/admin/reports", label: "Reports", icon: Flag },
-  { href: "/admin/certificates", label: "Certificates", icon: Award },
-  { href: "/admin/register", label: "Create instructor", icon: ShieldPlus },
+  {
+    href: "/staff/dashboard",
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    superAdminOnly: true,
+  },
+  { href: "/staff/users", label: "Users", icon: Users, superAdminOnly: true },
+  { href: "/staff/courses", label: "Courses", icon: BookOpen },
+  { href: "/staff/enrollments", label: "Enrollments", icon: TicketCheck },
+  { href: "/staff/reports", label: "Reports", icon: Flag },
+  {
+    href: "/staff/certificates",
+    label: "Certificates",
+    icon: Award,
+    superAdminOnly: true,
+  },
+  {
+    href: "/staff/register",
+    label: "Create instructor",
+    icon: ShieldPlus,
+    superAdminOnly: true,
+  },
 ];
 
 export function AdminNav() {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "SUPERADMIN";
+
+  const visible = items
+    .filter((item) => !item.superAdminOnly || isSuperAdmin)
+    .map((item) =>
+      item.href === "/staff/courses" && !isSuperAdmin
+        ? { ...item, label: "My Courses" }
+        : item,
+    );
 
   return (
     <nav className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-      {items.map((item) => {
+      {visible.map((item) => {
         const Icon = item.icon;
         const active =
-          item.href === "/admin/dashboard"
+          item.href === "/staff/dashboard"
             ? pathname === item.href
             : pathname.startsWith(item.href);
         return (

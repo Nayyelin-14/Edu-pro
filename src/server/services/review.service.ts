@@ -1,22 +1,25 @@
 import { prisma } from "@/lib/prisma";
 import { conflict, forbidden, notFound } from "@/lib/errors";
+import type { TenantContext } from "@/server/tenant-context";
 import { isEnrolled } from "./enrollment.service";
 
 export async function createReview(
-  userId: string,
+  ctx: TenantContext,
   input: { courseId: string; rating: number; content?: string },
 ) {
-  const course = await prisma.course.findUnique({
-    where: { id: input.courseId },
+  const userId = ctx.user.id;
+  // Tenant-scoped course lookup: cross-tenant ids resolve as "not found".
+  const course = await prisma.course.findFirst({
+    where: { id: input.courseId, tenantId: ctx.tenant.id },
     select: { id: true, isPublished: true },
   });
   if (!course || !course.isPublished) throw notFound("Course not found");
 
-  const enrolled = await isEnrolled(userId, input.courseId);
+  const enrolled = await isEnrolled(userId, input.courseId, ctx.tenant.id);
   if (!enrolled) throw forbidden("Enroll in the course before reviewing it");
 
-  const existing = await prisma.review.findUnique({
-    where: { userId_courseId: { userId, courseId: input.courseId } },
+  const existing = await prisma.review.findFirst({
+    where: { userId, courseId: input.courseId, tenantId: ctx.tenant.id },
   });
   if (existing) throw conflict("You have already reviewed this course");
 
@@ -24,6 +27,7 @@ export async function createReview(
     data: {
       userId,
       courseId: input.courseId,
+      tenantId: ctx.tenant.id,
       rating: input.rating,
       content: input.content || null,
     },
@@ -33,13 +37,16 @@ export async function createReview(
 }
 
 export async function updateReview(
-  userId: string,
+  ctx: TenantContext,
   reviewId: string,
   input: { rating?: number; content?: string | null },
 ) {
-  const review = await prisma.review.findUnique({ where: { id: reviewId } });
+  const userId = ctx.user.id;
+  // Tenant-scoped + owner-scoped lookup (IDOR-safe).
+  const review = await prisma.review.findFirst({
+    where: { id: reviewId, userId, tenantId: ctx.tenant.id },
+  });
   if (!review) throw notFound("Review not found");
-  if (review.userId !== userId) throw forbidden("Not your review");
 
   const updated = await prisma.review.update({
     where: { id: reviewId },
@@ -62,9 +69,9 @@ export async function listCourseReviews(courseId: string) {
   });
 }
 
-export async function hasReviewed(userId: string, courseId: string) {
-  const review = await prisma.review.findUnique({
-    where: { userId_courseId: { userId, courseId } },
+export async function hasReviewed(ctx: TenantContext, courseId: string) {
+  const review = await prisma.review.findFirst({
+    where: { userId: ctx.user.id, courseId, tenantId: ctx.tenant.id },
     select: { id: true, rating: true, content: true },
   });
   return review;

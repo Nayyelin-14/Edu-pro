@@ -119,6 +119,68 @@ export async function sendPasswordResetEmail(
   });
 }
 
+export async function sendCourseApprovedEmail(
+  to: string,
+  courseTitle: string,
+  courseUrl: string,
+): Promise<void> {
+  await send({
+    to,
+    subject: `Your course "${courseTitle}" is now live`,
+    html: wrapHtml(
+      "Course approved",
+      `<p>Great news — your course <strong>${courseTitle}</strong> has been approved and is now published.</p><p><a href="${courseUrl}" style="display:inline-block;background:#166534;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">View course</a></p>`,
+    ),
+  });
+}
+
+export async function sendCourseRejectedEmail(
+  to: string,
+  courseTitle: string,
+  courseUrl: string,
+): Promise<void> {
+  await send({
+    to,
+    subject: `Your course "${courseTitle}" was not approved`,
+    html: wrapHtml(
+      "Course rejected",
+      `<p>Your course <strong>${courseTitle}</strong> was not approved. You can review it, address the feedback, and resubmit it for review.</p><p><a href="${courseUrl}" style="display:inline-block;background:#b91c1c;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Review course</a></p>`,
+    ),
+  });
+}
+
+export async function sendCertificateEmail(
+  to: string,
+  courseTitle: string,
+  certificateNumber: string,
+  verifyUrl: string,
+): Promise<void> {
+  await send({
+    to,
+    subject: `Your certificate for "${courseTitle}" is ready`,
+    html: wrapHtml(
+      "Certificate issued",
+      `<p>Congratulations! You earned a certificate for completing <strong>${courseTitle}</strong>.</p><p><strong>Certificate No.</strong> ${certificateNumber}</p><p><a href="${verifyUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Verify certificate</a></p>`,
+    ),
+  });
+}
+
+export async function sendPurchaseReceiptEmail(
+  to: string,
+  courseTitle: string,
+  amountBaht: number,
+  courseUrl: string,
+): Promise<void> {
+  await send({
+    to,
+    subject: `Your purchase of "${courseTitle}" is complete`,
+    html: wrapHtml(
+      "Payment confirmed",
+      `<p>Thank you for your purchase. You now have access to <strong>${courseTitle}</strong>.</p><p><strong>Amount paid:</strong> ฿${amountBaht.toLocaleString("en-US")}</p><p><a href="${courseUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Start learning</a></p>`,
+    ),
+  });
+}
+
 export function appUrl(): string {
   return baseUrl();
 }

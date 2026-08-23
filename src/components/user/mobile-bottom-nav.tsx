@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, BookOpen, Bookmark, Flag } from "lucide-react";
+import { Home, BookOpen, Bookmark, Flag, LayoutDashboard } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -15,12 +15,19 @@ export function MobileBottomNav() {
   const { t } = useI18n();
 
   const userId = user?.id;
-  const items = [
-    { href: "/", label: t.nav.home, icon: Home },
-    { href: `/${userId}/my-courses`, label: t.nav.myCourses, icon: BookOpen },
-    { href: `/${userId}/saved`, label: t.nav.saved, icon: Bookmark },
-    { href: `/${userId}/reports`, label: t.nav.reports, icon: Flag },
-  ].slice(0, MAX_VISIBLE);
+  const isSuperAdmin = user?.role === "SUPERADMIN";
+
+  const items = isSuperAdmin
+    ? [
+        { href: "/", label: t.nav.home, icon: Home },
+        { href: "/staff/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      ]
+    : [
+        { href: "/", label: t.nav.home, icon: Home },
+        { href: `/${userId}/my-courses`, label: t.nav.myCourses, icon: BookOpen },
+        { href: `/${userId}/saved`, label: t.nav.saved, icon: Bookmark },
+        { href: `/${userId}/reports`, label: t.nav.reports, icon: Flag },
+      ].slice(0, MAX_VISIBLE);
 
   return (
     <nav

@@ -1,12 +1,13 @@
 import { ok, run } from "@/lib/api";
 import { getUserScores } from "@/server/services/user.service";
-import { requireUser } from "@/server/guards";
+import { requireTenantContext } from "@/server/tenant-context";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   return run(async () => {
-    const user = await requireUser();
-    return ok(await getUserScores(user.id));
+    // TENANT MODE: scores are scoped to the active tenant.
+    const ctx = await requireTenantContext();
+    return ok(await getUserScores(ctx.user.id, ctx.tenant.id));
   });
 }

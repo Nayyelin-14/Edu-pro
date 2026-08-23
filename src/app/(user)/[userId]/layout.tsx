@@ -34,7 +34,7 @@ export default async function UserIdLayout({
   const session = await getSessionUser();
 
   if (session && session.id !== userId) {
-    redirect(`/${session.id}/profile`);
+    redirect(`/${session.id}/dashboard`);
   }
 
   return (

@@ -1,19 +1,23 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
-import { ArrowRight, AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Sparkles } from "lucide-react";
+import { motion } from "motion/react";
 import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert } from "@/components/ui/alert";
 import { useToast } from "@/components/ui/toast";
 import { useI18n } from "@/i18n";
-import { apiFetch } from "@/lib/api-client";
 import { RoadmapGenerating } from "@/components/roadmap/roadmap-generating";
-import { useGenerateRoadmap } from "@/hooks/use-roadmaps";
-import type { RoadmapJobStatus } from "@/hooks/use-roadmaps";
+import { RoadmapClarification, type ClarificationAnswerInput } from "@/components/roadmap/roadmap-clarification";
+import { NimModelSelect } from "@/components/roadmap/model-select";
+import {
+  useGenerateRoadmap,
+  useNimModels,
+  toNimModelOptions,
+  type ClarificationQuestion,
+  type GoalInterpretationPreview,
+} from "@/hooks/use-roadmaps";
+import { waitForRoadmapJob } from "@/lib/roadmap-poll";
 
 export interface GeneratedRoadmapInfo {
   id: string;
@@ -21,37 +25,48 @@ export interface GeneratedRoadmapInfo {
   goal: string;
 }
 
-export function RoadmapForm({ onGenerated }: { onGenerated?: (roadmap: GeneratedRoadmapInfo) => void }) {
+export function RoadmapForm({
+  onGenerated,
+}: {
+  onGenerated?: (roadmap: GeneratedRoadmapInfo) => void;
+}) {
   const { t } = useI18n();
   const { toast } = useToast();
-  const { mutate, isPending, error: mutationError } = useGenerateRoadmap();
+  const { mutate, isPending } = useGenerateRoadmap();
+  const { data: modelsData } = useNimModels();
   const onGeneratedRef = useRef(onGenerated);
-  onGeneratedRef.current = onGenerated;
-  const [polling, setPolling] = useState(false);
-
-  const isGenerating = isPending || polling;
+  useEffect(() => {
+    onGeneratedRef.current = onGenerated;
+  }, [onGenerated]);
+  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+  const [clarification, setClarification] = useState<{
+    questions: ClarificationQuestion[];
+    interpretation: GoalInterpretationPreview | null;
+  } | null>(null);
 
   const [goal, setGoal] = useState("");
-  const [level, setLevel] = useState<"BEGINNER" | "INTERMEDIATE" | "ADVANCED">("BEGINNER");
-  const [durationWeeks, setDurationWeeks] = useState(12);
-  const [hoursPerWeek, setHoursPerWeek] = useState(8);
-  const [language, setLanguage] = useState<"en" | "th">("en");
+  const [model, setModel] = useState("");
+  const selectedModel = model || modelsData?.defaultModel || "";
 
-  const levels = [
-    { value: "BEGINNER", label: t.roadmap.levelBeginner },
-    { value: "INTERMEDIATE", label: t.roadmap.levelIntermediate },
-    { value: "ADVANCED", label: t.roadmap.levelAdvanced },
-  ] as const;
+  const isGenerating = isPending || pollingJobId !== null;
 
-  const durations = [2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 52];
-  const hoursOptions = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20];
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
+  const runGeneration = (input: {
+    goal: string;
+    model?: string;
+    answers?: ClarificationAnswerInput[];
+  }) => {
     mutate(
-      { goal: goal.trim(), level, durationWeeks, hoursPerWeek, language },
+      { goal: input.goal, model: input.model, answers: input.answers },
       {
         onSuccess: async (data) => {
+          if (data.status === "NEEDS_CLARIFICATION") {
+            setClarification({
+              questions: data.questions ?? [],
+              interpretation: data.interpretation ?? null,
+            });
+            return;
+          }
+          setClarification(null);
           if (data.roadmap?.id) {
             // Synchronous completion (dev inline path).
             toast(t.roadmap.generatedSuccess, "success");
@@ -63,30 +78,23 @@ export function RoadmapForm({ onGenerated }: { onGenerated?: (roadmap: Generated
             return;
           }
           if (!data.jobId) return;
-          // Asynchronous path: poll the job until it completes or fails.
-          setPolling(true);
+          // Asynchronous path: poll real progressStage, then resolve.
+          setPollingJobId(data.jobId);
           try {
-            for (;;) {
-              await new Promise((r) => setTimeout(r, 3000));
-              const res = await apiFetch<RoadmapJobStatus>(`/api/ai/roadmap/jobs/${data.jobId}`);
-              if (res.status === "COMPLETED" && res.roadmap?.id) {
-                setPolling(false);
-                toast(t.roadmap.generatedSuccess, "success");
-                onGeneratedRef.current?.({
-                  id: res.roadmap.id,
-                  title: res.roadmap.title,
-                  goal: res.roadmap.goal,
-                });
-                return;
-              }
-              if (res.status === "FAILED") {
-                setPolling(false);
-                toast(t.roadmap.generationFailed, "error");
-                return;
-              }
+            const roadmap = await waitForRoadmapJob(data.jobId);
+            setPollingJobId(null);
+            if (!roadmap) {
+              toast(t.roadmap.generationFailed, "error");
+              return;
             }
+            toast(t.roadmap.generatedSuccess, "success");
+            onGeneratedRef.current?.({
+              id: roadmap.id,
+              title: roadmap.title,
+              goal: roadmap.goal,
+            });
           } catch (err) {
-            setPolling(false);
+            setPollingJobId(null);
             toast(err instanceof Error ? err.message : t.common.error, "error");
           }
         },
@@ -97,94 +105,129 @@ export function RoadmapForm({ onGenerated }: { onGenerated?: (roadmap: Generated
     );
   };
 
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    runGeneration({ goal: goal.trim(), model: selectedModel || undefined });
+  };
+
+  if (clarification) {
+    return (
+      <RoadmapClarification
+        questions={clarification.questions}
+        interpretation={clarification.interpretation}
+        pending={isPending}
+        onAnswers={(answers) => {
+          setClarification(null);
+          runGeneration({ goal: goal.trim(), model: selectedModel || undefined, answers });
+        }}
+      />
+    );
+  }
+
   if (isGenerating) {
-    return <RoadmapGenerating />;
+    return <RoadmapGenerating jobId={pollingJobId} />;
   }
 
   return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>{t.roadmap.createTitle}</CardTitle>
-        <CardDescription>{t.roadmap.createSubtitle}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="goal">{t.roadmap.goalLabel}</Label>
-            <Textarea
-              id="goal"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder={t.roadmap.goalPlaceholder}
-              rows={4}
-              required
-              minLength={5}
-              maxLength={500}
-              disabled={isGenerating}
-            />
-            <p className="text-xs text-muted-foreground">{goal.length}/500</p>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>{t.roadmap.levelLabel}</Label>
-              <Select value={level} onChange={(e) => setLevel(e.target.value as typeof level)} disabled={isGenerating}>
-                {levels.map((l) => (
-                  <option key={l.value} value={l.value}>
-                    {l.label}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t.roadmap.durationLabel}</Label>
-              <Select value={durationWeeks} onChange={(e) => setDurationWeeks(Number(e.target.value))} disabled={isGenerating}>
-                {durations.map((w) => (
-                  <option key={w} value={w}>
-                    {t.roadmap.weekFormat(w)}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t.roadmap.hoursLabel}</Label>
-              <Select value={hoursPerWeek} onChange={(e) => setHoursPerWeek(Number(e.target.value))} disabled={isGenerating}>
-                {hoursOptions.map((h) => (
-                  <option key={h} value={h}>
-                    {t.roadmap.hourFormat(h)}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>{t.roadmap.languageLabel}</Label>
-              <Select value={language} onChange={(e) => setLanguage(e.target.value as "en" | "th")} disabled={isGenerating}>
-                <option value="en">English</option>
-                <option value="th">ไทย</option>
-              </Select>
-            </div>
-          </div>
-
-          {mutationError && (
-            <Alert variant="error">
-              <AlertCircle className="size-4" />
-              {mutationError instanceof Error ? mutationError.message : t.common.error}
-            </Alert>
-          )}
-
-          <Button type="submit" className="w-full" size="lg" disabled={isGenerating || !goal.trim()}>
-            {isGenerating ? t.roadmap.generating : t.roadmap.generateBtn}
-            <ArrowRight className="size-4 ml-2" />
-          </Button>
-
-          <p className="text-center text-xs text-muted-foreground">
-            {t.roadmap.footerNote}
+    <div className="w-full space-y-6">
+      {/* Header with icon */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center gap-3"
+      >
+        <motion.div
+          className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-primary to-accent shadow-md"
+          whileHover={{ scale: 1.05 }}
+        >
+          <Sparkles className="size-5 text-white" aria-hidden="true" />
+        </motion.div>
+        <div>
+          <h2 className="text-title-lg font-bold text-on-surface">
+            {t.roadmap.createTitle}
+          </h2>
+          <p className="text-label-sm text-on-surface-variant">
+            {t.roadmap.heroDescription}
           </p>
-        </form>
-      </CardContent>
-    </Card>
+        </div>
+      </motion.div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Goal input */}
+        <motion.div
+          className="space-y-2"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <Label htmlFor="goal" className="text-label-md font-medium">
+            {t.roadmap.goalLabel}
+          </Label>
+          <Textarea
+            id="goal"
+            value={goal}
+            onChange={(e) => setGoal(e.target.value)}
+            placeholder={t.roadmap.goalPlaceholderShort}
+            rows={3}
+            required
+            minLength={5}
+            maxLength={500}
+            disabled={isGenerating}
+            className="resize-none"
+          />
+          <div className="flex justify-between items-center">
+            <p className="text-xs text-on-surface-variant">
+              {t.roadmap.beSpecific}
+            </p>
+            <p className="text-xs text-on-surface-variant font-mono">
+              {goal.length}/500
+            </p>
+          </div>
+        </motion.div>
+
+        {/* Model picker */}
+        <motion.div
+          className="space-y-2"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <Label htmlFor="model" className="text-label-md font-medium">
+            {t.roadmap.modelLabel}
+          </Label>
+          <NimModelSelect
+            id="model"
+            value={selectedModel}
+            onChange={setModel}
+            disabled={isGenerating}
+            options={toNimModelOptions(modelsData?.models ?? [])}
+            placeholder={t.common.loading}
+          />
+        </motion.div>
+
+        {/* Generate button */}
+        <motion.div
+          className="flex justify-end pt-2"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+        >
+          <motion.button
+            type="submit"
+            disabled={isGenerating || !goal.trim()}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="flex items-center gap-2 rounded-xl bg-linear-to-r from-primary to-accent px-6 py-3 font-semibold text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:shadow-lg hover:shadow-primary/40 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Sparkles className="size-4" aria-hidden="true" />
+            {isGenerating ? t.roadmap.generating : t.roadmap.generateBtn}
+          </motion.button>
+        </motion.div>
+
+        <p className="text-center text-xs text-on-surface-variant">
+          {t.roadmap.footerNote}
+        </p>
+      </form>
+    </div>
   );
 }

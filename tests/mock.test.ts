@@ -14,7 +14,6 @@ function makeCandidate(overrides: Partial<CourseCandidate> = {}): CourseCandidat
     description: "Test description",
     category: "Backend",
     price: 0,
-    lessonCount: 10,
     studentCount: 50,
     rating: 4.0,
     ...overrides,
@@ -31,6 +30,12 @@ function makeContext(overrides: Partial<PlannerContext> = {}): PlannerContext {
   progress.set("c1", { courseId: "c1", enrolled: true, completedLessons: 5, totalLessons: 10, percent: 50, completed: false });
   return {
     goal: "Become a backend developer",
+    normalizedGoal: {
+      role: "backend developer",
+      skills: ["backend", "database", "api"],
+      level: "BEGINNER",
+      outcome: "become a backend developer",
+    },
     skills: ["backend", "database", "api"],
     level: "BEGINNER",
     durationWeeks: 12,
@@ -38,6 +43,26 @@ function makeContext(overrides: Partial<PlannerContext> = {}): PlannerContext {
     language: "en",
     candidates,
     progress,
+    interpretation: {
+      role: "backend developer",
+      domain: "software",
+      confidence: 0.8,
+      assumptions: [],
+      requiredSkills: [
+        { skill: "backend", importance: "critical", category: "foundational", source: "profile" },
+        { skill: "database", importance: "important", category: "core", source: "goal" },
+        { skill: "api", importance: "important", category: "core", source: "goal" },
+      ],
+      coveragePreview: {
+        goalCoverage: 66,
+        courseAvailability: 100,
+        skills: [
+          { skill: "backend", importance: "critical", status: "weak", reason: "insufficient_course_depth", quality: "insufficient", matchedCourseIds: [], catalogCourseIds: ["c1"] },
+          { skill: "database", importance: "important", status: "weak", reason: "insufficient_course_depth", quality: "insufficient", matchedCourseIds: [], catalogCourseIds: ["c2"] },
+          { skill: "api", importance: "important", status: "weak", reason: "insufficient_course_depth", quality: "insufficient", matchedCourseIds: [], catalogCourseIds: ["c3"] },
+        ],
+      },
+    },
     ...overrides,
   };
 }
@@ -47,7 +72,7 @@ describe("createMockProvider", () => {
     const provider = createMockProvider();
     const ctx = makeContext();
     const plan = await provider.generateRoadmap(ctx);
-    assert(plan.title.includes("Learning Roadmap"));
+    assert(plan.title.includes("Foundations"));
     assert(plan.stages.length > 0);
     assert(plan.stages.length <= 8);
   });
@@ -125,5 +150,22 @@ describe("createFailingMockProvider", () => {
     const provider = createFailingMockProvider();
     const ctx = makeContext();
     await assert.rejects(provider.generateRoadmap(ctx), /Mock AI provider failed/);
+  });
+});
+
+describe("mock interpretGoal", () => {
+  test("mirrors the deterministic analyzer (role, skills, level)", async () => {
+    const provider = createMockProvider();
+    const result = await provider.interpretGoal!({ goal: "Become a backend developer and learn PostgreSQL", language: "en" });
+    assert.strictEqual(result.role, "backend developer");
+    assert.ok(result.skills.includes("database"), "database skill from the learn region");
+    assert.strictEqual(result.level, "BEGINNER");
+  });
+
+  test("vague goals produce low confidence and assumptions", async () => {
+    const provider = createMockProvider();
+    const result = await provider.interpretGoal!({ goal: "I want to learn things", language: "en" });
+    assert.ok(result.confidence < 0.5, "ambiguity surfaces as low confidence");
+    assert.ok(result.assumptions.length > 0, "ambiguity surfaces as an assumption");
   });
 });

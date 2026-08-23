@@ -47,8 +47,8 @@ test("signed-out user is redirected to /login on a protected user route", async 
   assert.equal(p, "/login?next=%2FcmsqUser123%2Fprofile");
 });
 
-test("signed-out user is redirected to /login on a protected admin route", async () => {
-  const res = await proxy(req("/admin/dashboard"));
+test("signed-out user is redirected to /login on a protected staff route", async () => {
+  const res = await proxy(req("/staff/dashboard"));
   assert.equal(res.status, 307);
   const p = pathnameOf(location(res));
   assert.ok(p.startsWith("/login"), `expected /login, got ${p}`);

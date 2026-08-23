@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  check:
+    name: Lint, typecheck and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      # Never silently skip the integration suite: a CI run without a database
+      # secret is a failed run, not a warning.
+      - name: Fail when DATABASE_URL is missing (integration tests need a throwaway Postgres)
+        if: env.DATABASE_URL == ''
+        run: |
+          echo "::error::The DATABASE_URL secret is required — integration tests provision a throwaway 'elearning_test' database and will not run without it. Set the secret to the same Postgres connection string used by the app (the test runner creates the _test database automatically)."
+          exit 1
+
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Build
+        run: npm run build
+
+      # The build must not depend on infrastructure that CI does not have.
+      - name: Fail when required build-time secrets are missing
+        if: env.ENCRYPTION_KEY == ''
+        run: |
+          echo "::warning::ENCRYPTION_KEY is not set. The build succeeds without it, but 2FA secret encryption will fail closed at runtime. Set the secret for production."

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { ok, run } from "@/lib/api";
 import { startTest } from "@/server/services/test.service";
 import { requireUser } from "@/server/guards";
+import { requireTenantContext } from "@/server/tenant-context";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,8 @@ export async function POST(
   { params }: { params: Promise<{ testId: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    const ctx = await requireTenantContext();
     const { testId } = await params;
-    return ok(await startTest(user.id, testId));
+    return ok(await startTest(ctx, testId));
   });
 }

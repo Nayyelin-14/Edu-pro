@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { run, ok } from "@/lib/api";
 import { unauthorized, serviceUnavailable } from "@/lib/errors";
-import { createDefaultGeminiProvider } from "@/lib/ai/gemini";
+import { createDefaultProvider } from "@/lib/ai/nim";
 import { RoadmapService, PrismaRoadmapRepo } from "@/server/services/roadmap.service";
 import {
   acquireRoadmapSlot,
@@ -38,14 +38,20 @@ export async function POST(req: NextRequest) {
     }
 
     // Bounded provider concurrency: when at the cap, return 503 so QStash
-    // retries later instead of bursting Gemini on the free tier.
+    // retries later instead of bursting the NIM free tier.
     if (!(await acquireRoadmapSlot())) {
       throw serviceUnavailable("Roadmap generation is at capacity. Retrying.");
     }
 
     try {
-      const service = new RoadmapService(createDefaultGeminiProvider(), createRoadmapPublisher());
-      const result = await service.processJob(payload.jobId, new PrismaRoadmapRepo());
+      const repo = new PrismaRoadmapRepo();
+      // Use the model the user selected for this job (falls back to default).
+      const job = await repo.getJobById(payload.jobId);
+      const service = new RoadmapService(
+        createDefaultProvider(job?.model ?? undefined),
+        createRoadmapPublisher(),
+      );
+      const result = await service.processJob(payload.jobId, repo);
       return ok({ jobId: payload.jobId, result });
     } finally {
       await releaseRoadmapSlot();

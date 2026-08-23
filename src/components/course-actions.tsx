@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -35,6 +35,10 @@ export function CourseActions({
   totalDurationSeconds,
   rating,
   ratingCount,
+  initialSignedIn = false,
+  initialEnrolled = false,
+  initialProgress = null,
+  initialSaved = false,
 }: {
   courseId: string;
   slug: string;
@@ -46,14 +50,50 @@ export function CourseActions({
   totalDurationSeconds: number;
   rating: number;
   ratingCount: number;
+  initialSignedIn?: boolean;
+  initialEnrolled?: boolean;
+  initialProgress?: number | null;
+  initialSaved?: boolean;
 }) {
   const router = useRouter();
-  const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const { user, loading } = useAuth();
   const { toast } = useToast();
-  const [saved, setSaved] = useState(false);
-  const [enrolled, setEnrolled] = useState(false);
+  const [saved, setSaved] = useState(initialSaved);
+  const [enrolled, setEnrolled] = useState(initialEnrolled);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
+  const [progress, setProgress] = useState<number | null>(initialProgress);
+
+  // The server already knows the auth state (initialSignedIn), so we use that
+  // while useAuth() is still resolving to avoid flashing "Sign in to enroll".
+  const signedIn = loading ? initialSignedIn : Boolean(user);
+
+  // Returning from a successful Stripe checkout: confirm the payment and
+  // enroll (the webhook may not have arrived yet).
+  useEffect(() => {
+    if (!user || searchParams.get("payment") !== "success") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await apiFetch(`/api/courses/${courseId}/checkout/confirm`, {
+          method: "POST",
+        });
+        if (!cancelled) {
+          setEnrolled(true);
+          toast("Enrolled!", "success");
+          router.replace(`/courses/${slug}`);
+          router.refresh();
+        }
+      } catch (err) {
+        if (!cancelled) {
+          toast(err instanceof Error ? err.message : "Payment not confirmed", "error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, courseId, slug, searchParams, router, toast]);
 
   useEffect(() => {
     if (!user) return;
@@ -86,11 +126,28 @@ export function CourseActions({
   const enroll = async () => {
     setBusy(true);
     try {
-      await apiFetch(`/api/courses/${courseId}/enroll`, { method: "POST" });
-      setEnrolled(true);
-      toast("Enrolled!", "success");
-      router.refresh();
-      router.push(`/learning/${courseId}`);
+      if (isFree) {
+        await apiFetch(`/api/courses/${courseId}/enroll`, { method: "POST" });
+        setEnrolled(true);
+        toast("Enrolled!", "success");
+        router.refresh();
+        router.push(`/learning/${courseId}`);
+        return;
+      }
+      // Paid course: create/resume the Stripe Checkout session and redirect.
+      const res = await apiFetch<{ checkoutUrl: string | null; alreadyEnrolled: boolean }>(
+        `/api/courses/${courseId}/checkout`,
+        { method: "POST" },
+      );
+      if (res.alreadyEnrolled) {
+        setEnrolled(true);
+        router.refresh();
+        router.push(`/learning/${courseId}`);
+        return;
+      }
+      if (res.checkoutUrl) {
+        window.location.href = res.checkoutUrl;
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
     } finally {
@@ -146,7 +203,7 @@ export function CourseActions({
         </div>
 
         {/* Primary CTA */}
-        {!user ? (
+        {!signedIn ? (
           <Button asChild size="lg" className="w-full">
             <Link href={`/login?next=/courses/${slug}`}>Sign in to enroll</Link>
           </Button>
@@ -178,7 +235,13 @@ export function CourseActions({
           </div>
         ) : (
           <Button size="lg" className="w-full" onClick={() => void enroll()} disabled={busy}>
-            {busy ? "Enrolling…" : isFree ? "Enroll now" : "Enroll now"}
+            {busy
+              ? isFree
+                ? "Enrolling…"
+                : "Starting checkout…"
+              : isFree
+                ? "Enroll now"
+                : `Buy now · ${formatPrice(price)}`}
           </Button>
         )}
 

@@ -30,6 +30,7 @@ interface StartedTest {
 }
 
 interface TestResult {
+  id: string;
   score: number;
   total: number;
   percent: number;
@@ -40,12 +41,22 @@ interface TestResult {
 interface SubmitResponse {
   result: TestResult;
   certificate: { id: string; number: string; pdfUrl: string | null } | null;
+  eligible: boolean;
 }
 
 interface StatusResponse {
   test: { id: string; title: string; attemptLimit: number; passingScore: number };
   attemptsUsed: number;
   lastResult: TestResult | null;
+}
+
+interface CertRequestStatus {
+  request: {
+    id: string;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+    createdAt: string;
+    decidedAt: string | null;
+  } | null;
 }
 
 export function TestRunner({
@@ -63,6 +74,8 @@ export function TestRunner({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [certStatus, setCertStatus] = useState<CertRequestStatus["request"]>(null);
+  const [requesting, setRequesting] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -78,6 +91,41 @@ export function TestRunner({
       }
     })();
   }, [testId]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await apiFetch<CertRequestStatus>(
+          `/api/certificates/request?courseId=${courseId}`,
+        );
+        setCertStatus(data.request);
+      } catch {
+        // not critical — certificate status is optional context
+      }
+    })();
+  }, [courseId]);
+
+  const requestCertificate = async () => {
+    setRequesting(true);
+    setError("");
+    try {
+      const data = await apiFetch<CertRequestStatus>(
+        `/api/certificates/request`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            courseId,
+            testResultId: result?.result.id,
+          }),
+        },
+      );
+      setCertStatus(data.request);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setRequesting(false);
+    }
+  };
 
   useEffect(() => {
     if (!running) return;
@@ -195,6 +243,48 @@ export function TestRunner({
               )}
             </div>
           )}
+          {result.eligible && !result.certificate && (
+            <div className="rounded-lg border border-primary/40 bg-primary/10 p-4">
+              {certStatus?.status === "PENDING" ? (
+                <p className="text-sm font-medium">
+                  Your certificate request is pending review by the instructor.
+                </p>
+              ) : certStatus?.status === "APPROVED" ? (
+                <p className="text-sm font-medium">
+                  Your certificate has been approved. See it in your certificates.
+                </p>
+              ) : certStatus?.status === "REJECTED" ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">
+                    Your certificate request was declined. You can request again.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void requestCertificate()}
+                    disabled={requesting}
+                  >
+                    {requesting ? "Requesting…" : "Request certificate again"}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm">
+                    You passed! Request a certificate and the instructor will
+                    review it.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={() => void requestCertificate()}
+                    disabled={requesting}
+                  >
+                    {requesting ? "Requesting…" : "Request certificate"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          {error && <Alert variant="error">{error}</Alert>}
           <div className="flex gap-2">
             <Button asChild variant="outline">
               <Link href={`/learning/${courseId}`}>Back to course</Link>
@@ -270,6 +360,21 @@ export function TestRunner({
           >
             Last attempt: {status.lastResult.score}/{status.lastResult.total} (
             {status.lastResult.percent}%)
+          </Alert>
+        )}
+        {certStatus?.status === "PENDING" && (
+          <Alert variant="info">
+            Certificate request pending review by the instructor.
+          </Alert>
+        )}
+        {certStatus?.status === "APPROVED" && (
+          <Alert variant="success">
+            Certificate approved — see it in your certificates.
+          </Alert>
+        )}
+        {certStatus?.status === "REJECTED" && (
+          <Alert variant="error">
+            Your certificate request was declined by the instructor.
           </Alert>
         )}
         {error && <Alert variant="error">{error}</Alert>}

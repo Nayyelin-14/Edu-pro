@@ -43,7 +43,13 @@ interface SubmitResponse {
 }
 
 interface StatusResponse {
-  test: { id: string; title: string; attemptLimit: number; passingScore: number };
+  test: {
+    id: string;
+    title: string;
+    attemptLimit: number;
+    passingScore: number;
+    timeLimitMinutes: number;
+  };
   attemptsUsed: number;
   lastResult: TestResult | null;
 }
@@ -473,7 +479,9 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
             <div className="p-4 bg-muted/50 rounded-xl">
               <Timer className="size-6 text-primary mx-auto mb-1" />
               <p className="text-sm text-muted-foreground">Time Limit</p>
-              <p className="text-xl font-bold text-foreground">{status?.test.passingScore}%</p>
+              <p className="text-xl font-bold text-foreground">
+                {status?.test.timeLimitMinutes} min
+              </p>
             </div>
             <div className="p-4 bg-muted/50 rounded-xl">
               <Flag className="size-6 text-primary mx-auto mb-1" />

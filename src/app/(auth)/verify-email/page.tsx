@@ -85,7 +85,7 @@ export default function VerifyEmailPage() {
 
   const goToDashboard = () => {
     if (user?.id) {
-      router.push(`/${user.id}/profile`);
+      router.push(`/${user.id}/dashboard`);
     } else {
       router.push("/login");
     }

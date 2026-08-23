@@ -68,9 +68,9 @@ export async function verifyQStashSignature(signature: string, body: string): Pr
 }
 
 // ---------------------------------------------------------------------------
-// Global provider-concurrency guard (bounded Gemini calls on the free tier).
+// Global provider-concurrency guard (bounded NIM calls on the free tier).
 //
-// FAIL-CLOSED GLOBAL CAP: this guard is the hard backstop against Gemini cost
+// FAIL-CLOSED GLOBAL CAP: this guard is the hard backstop against NIM cost
 // overruns. The worker refuses to start a generation when ROADMAP_MAX_INFLIGHT
 // (default 10) concurrent provider calls are already in flight — it returns 503
 // so QStash retries later. Because the counter lives in Upstash Redis (not in

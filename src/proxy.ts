@@ -7,7 +7,7 @@ const STAFF = new Set(["INSTRUCTOR", "SUPERADMIN"]);
 const USER_PREFIXES = ["/learning"];
 const USER_SUFFIX_RE =
   /^\/[^/]+\/(profile|my-courses|saved|certificates|reports|roadmap)(\/|$)/;
-const STAFF_PREFIXES = ["/admin"];
+const STAFF_PREFIXES = ["/staff"];
 const AUTH_PAGES = new Set([
   "/login",
   "/register",
@@ -80,3 +80,20 @@ export async function proxy(req: NextRequest) {
 
   return NextResponse.next();
 }
+
+// Run the session proxy on all page routes (excluding API routes, which are
+// guarded server-side, and static assets). Auth pages get the "already signed
+// in" redirect; /staff and /learning plus user-area routes get the
+// "not signed in" redirect to /login.
+export const config = {
+  matcher: [
+    "/staff/:path*",
+    "/learning/:path*",
+    "/login",
+    "/register",
+    "/forgot-password",
+    "/reset-password",
+    "/verify-email",
+    "/((?!_next/static|_next/image|favicon.ico|api|.*\\.(?:png|jpg|jpeg|svg|ico|webp|mp4|webm)$).*)",
+  ],
+};

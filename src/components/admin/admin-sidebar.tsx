@@ -1,113 +1,85 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
-  Users,
-  BookOpen,
-  TicketCheck,
-  Flag,
   Award,
-  ShieldPlus,
-  Settings,
+  BarChart3,
+  Bell,
+  BookOpen,
+  Flag,
   HelpCircle,
+  LayoutDashboard,
+  Settings,
+  ShieldPlus,
+  TicketCheck,
+  UserRound,
+  Users,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  superAdminOnly?: boolean;
-}
-
-const navItems: NavItem[] = [
-  { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/users", label: "Users", icon: Users },
-  { href: "/admin/courses", label: "Courses", icon: BookOpen },
-  { href: "/admin/enrollments", label: "Enrollments", icon: TicketCheck },
-  { href: "/admin/reports", label: "Reports", icon: Flag },
-  { href: "/admin/certificates", label: "Certificates", icon: Award },
-  { href: "/admin/register", label: "Create instructor", icon: ShieldPlus, superAdminOnly: true },
-];
-
-const bottomItems: NavItem[] = [
-  { href: "/admin/settings", label: "Settings", icon: Settings },
-  { href: "/admin/help", label: "Help", icon: HelpCircle },
-];
+import { AppSidebar } from "@/components/app-sidebar";
+import type { SidebarGroup, SidebarItem } from "@/components/app-sidebar";
 
 interface AdminSidebarProps {
-  user: { role: string };
+  user: { id: string; role: string; username: string; email: string; avatar?: string | null };
 }
 
 export function AdminSidebar({ user }: AdminSidebarProps) {
-  const pathname = usePathname();
   const isSuperAdmin = user.role === "SUPERADMIN";
 
-  const filteredNavItems = navItems.filter((item) => !item.superAdminOnly || isSuperAdmin);
+  const adminItems: SidebarItem[] = [
+    { href: "/staff/dashboard", label: "Dashboard", icon: LayoutDashboard, exact: true },
+    { href: "/staff/notifications", label: "Notifications", icon: Bell, exact: true },
+    ...(isSuperAdmin
+      ? [
+          { href: `/${user.id}/profile`, label: "Profile", icon: UserRound },
+          { href: "/staff/users", label: "Users", icon: Users },
+        ]
+      : []),
+    {
+      href: "/staff/courses",
+      label: isSuperAdmin ? "Courses" : "My Courses",
+      icon: BookOpen,
+      // Highlight only on the management list — not on /new or /[id] (those have
+      // their own tabs below).
+      match: (p: string) =>
+        p === "/staff/courses" ||
+        (!p.startsWith("/staff/courses/new") &&
+          p.startsWith("/staff/courses") &&
+          !/\/staff\/courses\/[^/]+$/.test(p)),
+    },
+    { href: "/staff/enrollments", label: "Enrollments", icon: TicketCheck },
+    {
+      href: "/staff/certificate-requests",
+      label: "Certificate Requests",
+      icon: Award,
+      exact: true,
+    },
+    { href: "/staff/reports", label: "Reports", icon: Flag },
+    { href: "/staff/analytics", label: "Analytics", icon: BarChart3 },
+    ...(isSuperAdmin
+      ? [{ href: "/staff/certificates", label: "Certificates", icon: Award }]
+      : []),
+    ...(isSuperAdmin
+      ? [{ href: "/staff/register", label: "Register Staff", icon: ShieldPlus }]
+      : []),
+  ];
+
+  const bottomItems: SidebarItem[] = [
+    { href: "/staff/settings", label: "Settings", icon: Settings },
+    { href: "/staff/help", label: "Help", icon: HelpCircle },
+  ];
+
+  const groups: SidebarGroup[] = [
+    { id: "staff", label: "Management", items: adminItems },
+  ];
 
   return (
-    <aside className="hidden md:flex fixed left-0 top-0 h-screen w-[280px] z-40 flex-col py-6 bg-background border-r border-border">
-      <div className="px-6 mb-8">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-            <BookOpen className="size-6 text-primary-foreground" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-foreground">EduPro</h1>
-            <p className="text-xs text-muted-foreground">Admin Suite</p>
-          </div>
-        </div>
-      </div>
-      <nav className="flex-1 flex flex-col gap-1 px-4">
-        {filteredNavItems.map((item) => {
-          const Icon = item.icon;
-          const active =
-            item.href === "/admin/dashboard"
-              ? pathname === item.href
-              : pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors",
-                active
-                  ? "bg-primary/10 text-primary border-l-4 border-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              <Icon className="size-5" />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-      <div className="mt-auto px-4 border-t border-border pt-4 flex flex-col gap-1">
-        {bottomItems.map((item) => {
-          const Icon = item.icon;
-          const active =
-            item.href === "/admin/dashboard"
-              ? pathname === item.href
-              : pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors",
-                active
-                  ? "bg-primary/10 text-primary border-l-4 border-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              <Icon className="size-5" />
-              {item.label}
-            </Link>
-          );
-        })}
-      </div>
-    </aside>
+    <AppSidebar
+      groups={groups}
+      bottomItems={bottomItems}
+      user={{
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar,
+      }}
+    />
   );
 }

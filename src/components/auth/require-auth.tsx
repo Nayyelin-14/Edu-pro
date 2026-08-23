@@ -42,7 +42,7 @@ export function RequireAuth({ children, userId }: RequireAuthProps) {
       return;
     }
     if (userId && user.id !== userId) {
-      router.replace(`/${user.id}/profile`);
+      router.replace(`/${user.id}/dashboard`);
     }
   }, [loading, user, userId, pathname, router]);
 

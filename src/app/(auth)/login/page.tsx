@@ -137,13 +137,18 @@ function LoginForm() {
   const next = sanitizeReturnTo(searchParams.get("next") ?? "/");
   const { t } = useI18n();
 
+  const landingFor = (u: PublicUser) =>
+    u.role === "SUPERADMIN" || u.role === "INSTRUCTOR"
+      ? "/staff/dashboard"
+      : `/${u.id}/dashboard`;
+
   // When an existing (refreshable) session is detected on the login page —
   // e.g. the access JWT expired while the refresh token is still valid — send
   // the user straight back to where they were heading instead of showing the
   // form. `next` is sanitized against open-redirect attackers.
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace(next);
+      router.replace(next === "/" ? landingFor(user) : next);
     }
   }, [authLoading, user, next, router]);
 
@@ -176,8 +181,10 @@ function LoginForm() {
         setView("mfa");
         return;
       }
-      if (data.user) setUser(data.user);
-      router.push(next);
+      if (data.user) {
+        setUser(data.user);
+        router.push(next === "/" ? landingFor(data.user) : next);
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t.common.error);
@@ -201,7 +208,7 @@ function LoginForm() {
         },
       );
       setUser(user);
-      router.push(next);
+      router.push(next === "/" ? landingFor(user) : next);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t.common.error);

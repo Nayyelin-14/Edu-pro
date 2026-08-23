@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, LogOut, Menu, X } from "lucide-react";
 import { useState } from "react";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/i18n";
 import { LanguageSwitcher } from "./language-switcher";
@@ -24,7 +23,7 @@ export function SiteHeader() {
   return (
     <nav
       aria-label="Main Navigation"
-      className="sticky top-0 left-0 z-50 w-full border-b border-outline-variant bg-surface transition-all duration-200"
+      className="sticky top-0 left-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md transition-all duration-200"
     >
       <div className="mx-auto flex h-navbar-height max-w-container-max items-center justify-between px-margin-mobile md:px-margin-desktop">
         <div className="flex items-center gap-gutter">
@@ -75,28 +74,41 @@ export function SiteHeader() {
           </button>
 
           <div className="flex items-center gap-2">
-            <ThemeToggle />
             <LanguageSwitcher />
           </div>
 
           <div className="flex items-center gap-2">
             {loading ? null : user ? (
               <>
-                {isStaff && (
+                {user.role === "SUPERADMIN" ? (
                   <Link
-                    href="/admin/dashboard"
-                    className="hidden items-center gap-1 px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:flex"
+                    href="/staff/dashboard"
+                    className="hidden items-center gap-2 rounded-xl px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:flex"
                   >
-                    <LayoutDashboard className="size-4" />
-                    {t.nav.admin}
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-primary text-[11px] font-semibold text-white">
+                      {user.username.charAt(0).toUpperCase()}
+                    </span>
+                    {user.username}
                   </Link>
+                ) : (
+                  <>
+                    {isStaff && (
+                      <Link
+                        href="/staff/dashboard"
+                        className="hidden items-center gap-1 px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:flex"
+                      >
+                        <LayoutDashboard className="size-4" />
+                        {t.nav.admin}
+                      </Link>
+                    )}
+                    <Link
+                      href={`/${user.id}/dashboard`}
+                      className="hidden px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:block"
+                    >
+                      {user.username}
+                    </Link>
+                  </>
                 )}
-                <Link
-                  href={`/${user.id}/profile`}
-                  className="hidden px-2 py-2 text-label-md text-on-surface-variant transition-colors hover:text-primary sm:block"
-                >
-                  {user.username}
-                </Link>
                 <button
                   aria-label={t.common.logout}
                   onClick={() => void logout()}
@@ -109,13 +121,13 @@ export function SiteHeader() {
               <>
                 <Link
                   href="/login"
-                  className="hidden border border-outline px-4 py-2 text-label-md text-on-surface transition-colors hover:bg-surface-container-low sm:block"
+                  className="hidden border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-muted rounded-xl sm:block"
                 >
                   {t.common.login}
                 </Link>
                 <Link
                   href="/register"
-                  className="rounded bg-primary-container px-4 py-2 text-label-md text-white transition-colors hover:bg-primary-fixed-variant"
+                  className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground shadow-md shadow-primary/25 transition-opacity hover:opacity-90"
                 >
                   {t.common.register}
                 </Link>
@@ -149,22 +161,35 @@ export function SiteHeader() {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {user ? (
                 <>
-                  {isStaff && (
+                  {user.role === "SUPERADMIN" ? (
                     <Link
-                      href="/admin/dashboard"
+                      href="/staff/dashboard"
                       onClick={() => setOpen(false)}
-                      className="rounded border border-outline px-4 py-2 text-label-md text-on-surface"
+                      className="flex items-center gap-2 rounded border border-outline px-4 py-2 text-label-md text-on-surface"
                     >
-                      {t.nav.admin}
+                      <LayoutDashboard className="size-4" />
+                      {user.username}
                     </Link>
+                  ) : (
+                    <>
+                      {isStaff && (
+                        <Link
+                          href="/staff/dashboard"
+                          onClick={() => setOpen(false)}
+                          className="rounded border border-outline px-4 py-2 text-label-md text-on-surface"
+                        >
+                          {t.nav.admin}
+                        </Link>
+                      )}
+                      <Link
+                        href={`/${user.id}/dashboard`}
+                        onClick={() => setOpen(false)}
+                        className="rounded border border-outline px-4 py-2 text-label-md text-on-surface"
+                      >
+                        {user.username}
+                      </Link>
+                    </>
                   )}
-                  <Link
-                    href={`/${user.id}/profile`}
-                    onClick={() => setOpen(false)}
-                    className="rounded border border-outline px-4 py-2 text-label-md text-on-surface"
-                  >
-                    {user.username}
-                  </Link>
                   <button
                     onClick={() => {
                       setOpen(false);
@@ -187,7 +212,7 @@ export function SiteHeader() {
                   <Link
                     href="/register"
                     onClick={() => setOpen(false)}
-                    className="rounded bg-primary-container px-4 py-2 text-label-md text-white"
+                    className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground shadow-md shadow-primary/25"
                   >
                     {t.common.register}
                   </Link>

@@ -41,7 +41,22 @@ async function seedUser(): Promise<string> {
   await prisma.user.create({
     data: { id, email: `${id}@example.com`, username: id, password: "x" },
   });
+  // Workers re-verify membership at execution time (Phase H) — grant it.
+  const t = await prisma.tenant.findUnique({ where: { slug: "fixture-default" } })
+    ?? await prisma.tenant.create({ data: { name: "Fixture Tenant", slug: "fixture-default" } });
+  await prisma.tenantMembership.create({
+    data: { userId: id, tenantId: t.id, role: "STUDENT" },
+  });
   return id;
+}
+
+let _tid: string | null = null;
+async function getTid(): Promise<string> {
+  if (_tid) return _tid;
+  const t = await prisma.tenant.findUnique({ where: { slug: "fixture-default" } })
+    ?? await prisma.tenant.create({ data: { name: "Fixture Tenant", slug: "fixture-default" } });
+  _tid = t.id;
+  return _tid;
 }
 
 async function seedCourse(): Promise<void> {
@@ -56,10 +71,11 @@ async function seedCourse(): Promise<void> {
       categoryId: category.id,
       isPublished: true,
       price: 0,
+      tenantId: await getTid(),
     },
   });
-  const courseModule = await prisma.module.create({ data: { courseId: course.id, title: "M", position: 1 } });
-  await prisma.lesson.create({ data: { moduleId: courseModule.id, title: "L", position: 1 } });
+  const courseModule = await prisma.module.create({ data: { courseId: course.id, title: "M", position: 1, tenantId: await getTid() } });
+  await prisma.lesson.create({ data: { moduleId: courseModule.id, title: "L", type: "READING", position: 1, tenantId: await getTid() } });
 }
 
 function countingProvider(delayMs = 0) {
@@ -99,7 +115,7 @@ test("1,000 identical concurrent deliveries produce exactly one roadmap and one 
   const repo = new PrismaRoadmapRepo();
   const { provider, calls } = countingProvider(500);
   const service = new RoadmapService(provider, new NoopRoadmapPublisher());
-  const { jobId } = await service.createJob(userId, input, repo, { publish: false });
+  const { jobId } = await service.createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   const settled = await Promise.allSettled(
     Array.from({ length: 1000 }, () => service.processJob(jobId, repo)),
@@ -137,7 +153,7 @@ test("across multiple application instances only one AI call happens", async () 
 
   const repo = new PrismaRoadmapRepo();
   const service = new RoadmapService(createMockProvider(), new NoopRoadmapPublisher());
-  const { jobId } = await service.createJob(userId, input, repo, { publish: false });
+  const { jobId } = await service.createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   const dir = mkdtempSync(join(tmpdir(), "roadmap-multi-"));
   const counterFile = join(dir, "ai-calls.txt");
@@ -188,12 +204,12 @@ test("a retry after a lost response returns the committed roadmap without anothe
   const { provider, calls } = countingProvider();
   const service = new RoadmapService(provider, new NoopRoadmapPublisher());
 
-  const created = await service.createJob(userId, input, repo, { publish: false });
+  const created = await service.createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
   const first = await service.processJob(created.jobId, repo);
   assert.strictEqual(first.outcome, "completed");
 
   // Simulate a lost HTTP response: the caller never saw the 202/200 and retries.
-  const retry = await service.createJob(userId, input, repo, { publish: false });
+  const retry = await service.createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   assert.strictEqual(retry.status, "COMPLETED");
   assert.strictEqual(retry.isNew, false);
@@ -207,7 +223,7 @@ test("provider failure marks the job FAILED, persists nothing, and a retry succe
   await seedCourse();
 
   const repo = new PrismaRoadmapRepo();
-  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   const failing = await new RoadmapService(createMockProvider({ shouldFail: true }), new NoopRoadmapPublisher()).processJob(jobId, repo);
   assert.strictEqual(failing.outcome, "failed");
@@ -219,7 +235,7 @@ test("provider failure marks the job FAILED, persists nothing, and a retry succe
   );
 
   // A new attempt resets the FAILED job to QUEUED and runs it fresh.
-  const retried = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const retried = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
   assert.strictEqual(retried.isNew, true);
   assert.strictEqual(retried.status, "QUEUED");
   const done = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).processJob(retried.jobId, repo);
@@ -236,7 +252,7 @@ test("an expired PROCESSING job (crash) is stolen and the roadmap is still gener
   await seedCourse();
 
   const repo = new PrismaRoadmapRepo();
-  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   // Simulate a worker that crashed mid-generation: PROCESSING with an expired lease.
   await prisma.roadmapGeneration.update({
@@ -263,7 +279,7 @@ test("a live (unexpired) PROCESSING lease blocks duplicate delivery as a no-op",
   await seedCourse();
 
   const repo = new PrismaRoadmapRepo();
-  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
 
   await prisma.roadmapGeneration.update({
     where: { id: jobId },
@@ -287,7 +303,7 @@ test("persists durable generation metadata to the roadmap row", async () => {
   await seedCourse();
 
   const repo = new PrismaRoadmapRepo();
-  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
   const result = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).processJob(jobId, repo);
   assert.strictEqual(result.outcome, "completed");
 
@@ -302,12 +318,46 @@ test("persists durable generation metadata to the roadmap row", async () => {
   assert.ok(row.generatedAt instanceof Date, "generatedAt must be recorded");
 });
 
+test("persists the deterministic interpretation and honest coverage columns", async () => {
+  const userId = await seedUser();
+  await seedCourse();
+
+  const repo = new PrismaRoadmapRepo();
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
+  const result = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).processJob(jobId, repo);
+  assert.strictEqual(result.outcome, "completed");
+
+  const row = await prisma.roadmap.findFirst({ where: { userId } });
+  assert.ok(row, "roadmap row must exist");
+  assert.ok(row.interpretation, "interpretation Json must be persisted");
+  assert.ok(Array.isArray((row.interpretation as { requiredSkills?: unknown[] }).requiredSkills), "requiredSkills present");
+  assert.ok(row.confidence >= 0 && row.confidence <= 1, "confidence is 0..1");
+  assert.ok(Array.isArray(row.assumptions), "assumptions array persisted");
+  assert.ok(row.goalCoverage >= 0 && row.goalCoverage <= 100, "goal coverage persisted");
+  assert.ok(row.courseAvailability >= 0 && row.courseAvailability <= 100, "course availability persisted");
+  assert.ok(["excellent", "good", "partial", "poor"].includes(row.roadmapQuality), "roadmap quality persisted");
+  const breakdown = row.coverageBreakdown as { skills?: unknown[]; goalCoverage?: number; courseAvailability?: number };
+  assert.ok(Array.isArray(breakdown.skills), "coverage breakdown skills persisted");
+  assert.strictEqual(breakdown.goalCoverage, row.goalCoverage, "breakdown matches column");
+  assert.strictEqual(breakdown.courseAvailability, row.courseAvailability, "availability matches column");
+
+  const item = await prisma.roadmapItem.findFirst({ where: { roadmapId: row.id, courseId: { not: null } } });
+  assert.ok(item, "a matched item exists");
+  assert.ok(["DIRECT", "STRONG", "RELATED", "WEAK"].includes(item.matchQuality ?? ""), "per-stage match quality persisted");
+  assert.ok(Array.isArray(item.matchedCompetencies), "matchedCompetencies evidence persisted for 'Why this course?'");
+
+  const generation = await prisma.roadmapGeneration.findUnique({ where: { id: jobId } });
+  assert.ok(generation, "job row exists");
+  assert.strictEqual(generation.progressStage, "completed", "honest final progress stage persisted");
+  assert.ok(generation.completedAt instanceof Date, "completion timestamp recorded");
+});
+
 test("generation persists as an unsaved draft until saveMyRoadmap confirms it", async () => {
   const userId = await seedUser();
   await seedCourse();
 
   const repo = new PrismaRoadmapRepo();
-  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false });
+  const { jobId } = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).createJob(userId, input, repo, { publish: false, tenantId: await getTid() });
   const result = await new RoadmapService(createMockProvider(), new NoopRoadmapPublisher()).processJob(jobId, repo);
   assert.strictEqual(result.outcome, "completed");
 
@@ -347,6 +397,7 @@ test("the job input snapshot is required; a job without it FAILS without calling
   const job = await prisma.roadmapGeneration.create({
     data: {
       userId,
+      tenantId: await getTid(),
       fingerprint,
       status: "QUEUED",
       expiresAt: new Date(Date.now() + 60_000),
@@ -361,4 +412,32 @@ test("the job input snapshot is required; a job without it FAILS without calling
   assert.strictEqual(result.outcome, "failed");
   assert.strictEqual(result.code, "missing_input");
   assert.strictEqual(calls(), 0);
+});
+
+test("refresh=true creates a genuinely new generation, never reusing the completed one", async () => {
+  const userId = await seedUser();
+  await seedCourse();
+
+  const service = new RoadmapService(createMockProvider(), new NoopRoadmapPublisher());
+  const repo = new PrismaRoadmapRepo();
+
+  // Normal (non-refresh) generation completes and becomes the idempotent result.
+  const first = await service.createJob(userId, { ...input, refresh: false }, repo, { publish: false, tenantId: await getTid() });
+  assert.strictEqual(first.isNew, true);
+  const processed = await service.processJob(first.jobId, repo);
+  assert.strictEqual(processed.outcome, "completed");
+  assert.ok(processed.roadmapId, "completion returns the persisted roadmap id");
+
+  // The same fingerprint idempotently returns the completed roadmap (no new job).
+  const replay = await service.createJob(userId, { ...input, refresh: false }, repo, { publish: false, tenantId: await getTid() });
+  assert.strictEqual(replay.status, "COMPLETED");
+  assert.strictEqual(replay.roadmapId, processed.roadmapId);
+  assert.strictEqual(replay.isNew, false);
+
+  // An explicit regenerate (refresh=true) must NEVER reuse it: new job + new fingerprint.
+  const second = await service.createJob(userId, { ...input, refresh: true }, repo, { publish: false, tenantId: await getTid() });
+  assert.strictEqual(second.isNew, true, "refresh must not return the completed job");
+  assert.notStrictEqual(second.jobId, first.jobId, "a new job row is created for a regenerate");
+
+  assert.strictEqual(await prisma.roadmap.count({ where: { userId } }), 1, "the refresh job is processed lazily by the worker, so no extra roadmap yet");
 });

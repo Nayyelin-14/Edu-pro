@@ -27,7 +27,16 @@ export const createCourseSchema = z.object({
   isFeatured: z.boolean().default(false),
 });
 
-export const updateCourseSchema = createCourseSchema.partial();
+const skillToken = z.string().trim().min(1).max(60);
+
+export const courseMetadataSchema = z.object({
+  difficulty: z.enum(["BEGINNER", "INTERMEDIATE", "ADVANCED"]).optional(),
+  estimatedHours: z.number().int().min(0).max(10_000).nullable().optional(),
+  skills: z.array(skillToken).max(50).optional(),
+  prerequisites: z.array(skillToken).max(50).optional(),
+});
+
+export const updateCourseSchema = createCourseSchema.partial().extend(courseMetadataSchema.shape);
 
 export const createModuleSchema = z.object({
   courseId: z.string().min(1),
@@ -42,29 +51,106 @@ export const updateModuleSchema = z.object({
   position: z.number().int().min(0).optional(),
 });
 
-export const createLessonSchema = z.object({
-  moduleId: z.string().min(1),
-  title: z.string().trim().min(1).max(160),
-  videoUrl: z.string().trim().optional(),
-  videoDuration: z.number().int().min(0).optional(),
-  article: z.string().max(50_000).optional(),
-  position: z.number().int().min(0).optional(),
-  isFree: z.boolean().default(false),
-});
+// ---------------------------------------------------------------------------
+// Lesson content model.
+//
+// Exactly TWO persisted types (VIDEO | READING); READING carries exactly ONE
+// source (rich-text article OR PDF). These discriminated unions are the first
+// enforcement layer; admin.course.service re-checks every rule (server is
+// authoritative), and DB CHECK constraints enforce exclusivity.
+//
+// Update semantics: content fields are ATOMIC. A PATCH must send the complete
+// desired content payload for the lesson's type — partial content merges are
+// rejected by design so conflicting combinations can never arise.
+// ---------------------------------------------------------------------------
 
-export const updateLessonSchema = z.object({
-  title: z.string().trim().min(1).max(160).optional(),
-  videoUrl: z.string().trim().nullable().optional(),
-  videoDuration: z.number().int().min(0).optional(),
-  article: z.string().max(50_000).nullable().optional(),
-  position: z.number().int().min(0).optional(),
-  isFree: z.boolean().optional(),
-});
+/** Public-facing media references must be proper https URLs. */
+const httpsUrl = z
+  .url({ protocol: /^https$/, hostname: /.*/ })
+  .max(2048);
+
+function readingRefine(
+  val: { article?: string | null; pdfUrl?: string | null },
+  ctx: z.RefinementCtx,
+) {
+  const hasArticle = typeof val.article === "string" && val.article.trim().length > 0;
+  const hasPdf = typeof val.pdfUrl === "string" && val.pdfUrl.length > 0;
+  if (hasArticle && hasPdf) {
+    ctx.addIssue({
+      code: "custom",
+      message: "A READING lesson cannot have both article and pdfUrl",
+      path: ["pdfUrl"],
+    });
+  } else if (!hasArticle && !hasPdf) {
+    ctx.addIssue({
+      code: "custom",
+      message: "A READING lesson needs exactly one content source: article or pdfUrl",
+      path: ["article"],
+    });
+  }
+}
+
+export const createLessonSchema = z.discriminatedUnion("type", [
+  z.object({
+    moduleId: z.string().min(1),
+    title: z.string().trim().min(1).max(160),
+    type: z.literal("VIDEO"),
+    // Required at creation: a VIDEO lesson is born with its video (either an
+    // uploaded asset already verified, or a legacy external https URL).
+    videoUrl: httpsUrl,
+    videoDuration: z.number().int().min(0).max(86_400).optional(),
+    article: z.null().optional(),
+    pdfUrl: z.null().optional(),
+    position: z.number().int().min(0).optional(),
+    isFree: z.boolean().default(false),
+  }),
+  z
+    .object({
+      moduleId: z.string().min(1),
+      title: z.string().trim().min(1).max(160),
+      type: z.literal("READING"),
+      videoUrl: z.null().optional(),
+      videoDuration: z.number().int().min(0).max(86_400).optional(),
+      article: z.string().max(50_000).nullable().optional(),
+      pdfUrl: httpsUrl.nullable().optional(),
+      position: z.number().int().min(0).optional(),
+      isFree: z.boolean().default(false),
+    })
+    .superRefine(readingRefine),
+]);
+
+export const updateLessonSchema = z.discriminatedUnion("type", [
+  z.object({
+    title: z.string().trim().min(1).max(160).optional(),
+    type: z.literal("VIDEO"),
+    videoUrl: httpsUrl,
+    videoDuration: z.number().int().min(0).max(86_400).optional(),
+    article: z.null().optional(),
+    pdfUrl: z.null().optional(),
+    position: z.number().int().min(0).optional(),
+    isFree: z.boolean().optional(),
+  }),
+  z
+    .object({
+      title: z.string().trim().min(1).max(160).optional(),
+      type: z.literal("READING"),
+      videoUrl: z.null().optional(),
+      videoDuration: z.number().int().min(0).max(86_400).optional(),
+      article: z.string().max(50_000).nullable().optional(),
+      pdfUrl: httpsUrl.nullable().optional(),
+      position: z.number().int().min(0).optional(),
+      isFree: z.boolean().optional(),
+    })
+    .superRefine(readingRefine),
+]);
+
+export type CreateLessonInput = z.infer<typeof createLessonSchema>;
+export type UpdateLessonInput = z.infer<typeof updateLessonSchema>;
 
 export const createQuizSchema = z.object({
   moduleId: z.string().min(1),
   title: z.string().trim().min(1).max(160),
-  questions: z.array(questionSchema).min(1).max(50),
+  questions: z.array(questionSchema).max(50).optional(),
 });
 
 export const updateQuizSchema = z.object({

@@ -80,9 +80,17 @@ export function ModuleCard({
   const addLesson = async () => {
     if (!lessonTitle.trim()) return;
     try {
-      await apiFetch("/api/admin/lessons", {
+      // New lessons are born as READING with starter content — the server
+      // rejects incomplete lessons. Switch to VIDEO in the lesson editor.
+      await apiFetch("/api/staff/lessons", {
         method: "POST",
-        body: JSON.stringify({ moduleId: module.id, title: lessonTitle, isFree: lessonFree }),
+        body: JSON.stringify({
+          moduleId: module.id,
+          title: lessonTitle,
+          type: "READING",
+          isFree: lessonFree,
+          article: "<p><em>Start writing your lesson…</em></p>",
+        }),
       });
       setLessonTitle("");
       toast("Lesson added", "success");
@@ -94,7 +102,7 @@ export function ModuleCard({
 
   const deleteLesson = async (id: string) => {
     try {
-      await apiFetch(`/api/admin/lessons/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/staff/lessons/${id}`, { method: "DELETE" });
       toast("Lesson deleted", "success");
       onChanged();
     } catch (err) {
@@ -108,7 +116,7 @@ export function ModuleCard({
       return;
     }
     try {
-      await apiFetch("/api/admin/quizzes", {
+      await apiFetch("/api/staff/quizzes", {
         method: "POST",
         body: JSON.stringify({ moduleId: module.id, title: quizTitle, questions: quizQuestions }),
       });
@@ -123,7 +131,7 @@ export function ModuleCard({
 
   const deleteQuiz = async (id: string) => {
     try {
-      await apiFetch(`/api/admin/quizzes/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/staff/quizzes/${id}`, { method: "DELETE" });
       toast("Quiz deleted", "success");
       onChanged();
     } catch (err) {

@@ -1,8 +1,10 @@
-import Link from "next/link";
-import { ArrowUpRight, BookOpen, Star, Users } from "lucide-react";
+"use client";
 
-import { Badge } from "@/components/ui/badge";
-import { cn, formatPrice } from "@/lib/utils";
+import Link from "next/link";
+import { ArrowUpRight, BookOpen, Clock, Star, Users } from "lucide-react";
+
+import { useI18n } from "@/i18n";
+import { cn, courseGradient, formatPrice } from "@/lib/utils";
 
 export interface CourseCardCourse {
   id: string;
@@ -16,6 +18,8 @@ export interface CourseCardCourse {
   rating?: number | null;
   ratingCount?: number | null;
   isFeatured?: boolean | null;
+  instructor?: { username: string } | null;
+  moduleCount?: number;
   category?: {
     id: string;
     name: string;
@@ -23,39 +27,42 @@ export interface CourseCardCourse {
   } | null;
 }
 
-export function CourseCard({
-  course,
-  showCategory = true,
-}: {
-  course: CourseCardCourse;
-  showCategory?: boolean;
-}) {
+function gradientFor(course: CourseCardCourse): string {
+  return courseGradient(course.category?.name ?? course.id);
+}
+
+function formatStudents(n: number): string {
+  if (n >= 1000) {
+    return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "")}k`;
+  }
+  return `${n}`;
+}
+
+export function CourseCard({ course }: { course: CourseCardCourse }) {
+  const { t } = useI18n();
   const price = course.price ?? 0;
   const image = course.coverImage ?? course.thumbnail;
-
   const rating = typeof course.rating === "number" ? course.rating : null;
+  const moduleCount = course.moduleCount ?? 0;
 
   return (
     <Link
       href={`/courses/${course.slug}`}
       className={cn(
         "group relative flex h-full flex-col overflow-hidden rounded-2xl",
-        "border border-outline-variant/70 bg-surface-container-lowest",
-        "shadow-sm",
+        "border border-border bg-card shadow-sm",
         "transition-all duration-300",
-        "hover:-translate-y-1.5",
-        "hover:border-primary/40",
-        "hover:shadow-[0_20px_45px_rgba(53,37,205,0.12)]",
+        "hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl hover:shadow-primary/10",
       )}
     >
       {/* Card glow */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -right-20 -top-20 h-40 w-40 rounded-full bg-primary/10 opacity-0 blur-3xl transition-opacity duration-500 group-hover:opacity-100"
+        className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-primary/10 opacity-0 blur-3xl transition-opacity duration-500 group-hover:opacity-100"
       />
 
-      {/* Cover image */}
-      <div className="relative h-[190px] w-full overflow-hidden bg-gradient-to-br from-primary-container/20 via-secondary-container/15 to-info-container/20">
+      {/* Header */}
+      <div className="relative h-40 w-full overflow-hidden">
         {image ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -65,99 +72,101 @@ export function CourseCard({
               className="size-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.06]"
             />
 
-            {/* Image overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-on-surface/60 via-transparent to-transparent" />
-
-            {/* Soft color wash */}
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-secondary/10 opacity-70 transition-opacity duration-300 group-hover:opacity-100" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
           </>
         ) : (
-          <div className="flex size-full items-center justify-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-outline-variant bg-surface-container-lowest/80 text-primary shadow-lg">
-              <BookOpen className="h-7 w-7" />
-            </div>
+          <div
+            className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${gradientFor(course)}`}
+          >
+            <BookOpen className="h-11 w-11 text-white/80" />
           </div>
         )}
 
         {/* Featured badge */}
         {course.isFeatured && (
-          <div className="absolute left-4 top-4">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-primary-foreground shadow-lg">
-              <span className="h-1.5 w-1.5 rounded-full bg-white" />
-              Featured
-            </span>
-          </div>
+          <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-primary shadow-sm backdrop-blur">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+            {t.course.featured}
+          </span>
         )}
 
         {/* Hover action */}
-        <div className="absolute bottom-4 right-4 flex h-9 w-9 translate-y-2 items-center justify-center rounded-full border border-white/20 bg-on-surface/25 text-white opacity-0 backdrop-blur-md transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="absolute bottom-3 right-3 flex h-8 w-8 translate-y-2 items-center justify-center rounded-full border border-white/20 bg-black/25 text-white opacity-0 backdrop-blur-md transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
           <ArrowUpRight className="h-4 w-4" />
         </div>
       </div>
 
       {/* Content */}
-      <div className="relative flex flex-1 flex-col p-5">
-        {showCategory && course.category && (
-          <div className="mb-3">
-            <span className="inline-flex items-center rounded-full border border-primary-container/30 bg-primary-container/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary">
-              {course.category.name}
-            </span>
-          </div>
-        )}
-
-        <h3 className="line-clamp-2 text-[17px] font-bold leading-6 tracking-[-0.015em] text-on-surface transition-colors duration-200 group-hover:text-primary">
-          {course.title}
-        </h3>
-
-        {course.subtitle && (
-          <p className="mt-2 line-clamp-2 text-sm leading-5 text-on-surface-variant">
-            {course.subtitle}
+      <div className="relative flex flex-1 flex-col p-4">
+        {course.category && (
+          <p className="mb-1 text-xs font-semibold text-primary">
+            {course.category.name}
           </p>
         )}
 
-        {/* Stats */}
-        <div className="mt-auto pt-5">
-          <div className="flex items-center gap-4">
-            {rating !== null && (
-              <div className="flex items-center gap-1.5">
-                <Star className="h-4 w-4 fill-warning text-warning" />
-                <span className="text-sm font-bold text-on-surface">
-                  {rating.toFixed(1)}
-                </span>
-                {typeof course.ratingCount === "number" &&
-                  course.ratingCount > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      ({course.ratingCount})
-                    </span>
-                  )}
-              </div>
-            )}
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground transition-colors duration-200 group-hover:text-primary">
+          {course.title}
+        </h3>
 
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Users className="h-3.5 w-3.5" />
-              <span>{course.studentCount.toLocaleString("en-US")}</span>
-            </div>
-          </div>
+        {course.instructor?.username ? (
+          <p className="mb-2 mt-0.5 text-xs text-muted-foreground">
+            {course.instructor.username}
+          </p>
+        ) : (
+          course.subtitle && (
+            <p className="mb-2 mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+              {course.subtitle}
+            </p>
+          )
+        )}
 
-          {/* Footer */}
-          <div className="mt-4 flex items-center justify-between border-t border-outline-variant pt-4">
-            <div>
-              <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                Course price
-              </p>
-              <span className="text-lg font-extrabold tracking-tight text-on-surface">
-                {formatPrice(price)}
-              </span>
-            </div>
+        {/* Rating */}
+        <div className="flex items-center gap-0.5">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Star
+              key={i}
+              className={cn(
+                "h-3 w-3",
+                rating !== null && i <= Math.floor(rating)
+                  ? "fill-amber-400 text-amber-400"
+                  : "text-muted-foreground/30",
+              )}
+            />
+          ))}
+          <span className="ml-1 font-mono text-xs text-muted-foreground">
+            {rating !== null ? rating.toFixed(1) : "—"}
+          </span>
+          {typeof course.ratingCount === "number" && course.ratingCount > 0 && (
+            <span className="ml-1 font-mono text-xs text-muted-foreground">
+              ({course.ratingCount})
+            </span>
+          )}
+        </div>
 
-            <Badge
-              variant="outline"
-              className="hidden rounded-full px-3 py-1.5 text-xs font-semibold text-on-surface-variant transition-all duration-200 group-hover:border-primary/40 group-hover:bg-primary-container/10 group-hover:text-primary sm:inline-flex"
-            >
-              View course
-              <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
-            </Badge>
-          </div>
+        {/* Meta */}
+        <div className="mt-2.5 flex gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Users className="h-3 w-3" />
+            {formatStudents(course.studentCount)}
+          </span>
+          {moduleCount > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {t.course.modulesCount(moduleCount)}
+            </span>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+          <span className="text-sm font-bold text-foreground">
+            {formatPrice(price)}
+          </span>
+
+          <span className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm shadow-primary/25 transition-opacity group-hover:opacity-90">
+            {t.course.viewCourse}
+            <ArrowUpRight className="h-3 w-3" />
+          </span>
         </div>
       </div>
 

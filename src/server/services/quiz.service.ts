@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { notFound } from "@/lib/errors";
 import { fromJson } from "@/lib/json";
 import type { QuestionShape } from "@/types/content";
+import type { TenantContext } from "@/server/tenant-context";
 import { isEnrolled } from "./enrollment.service";
 
 interface AnswerInput {
@@ -10,12 +11,14 @@ interface AnswerInput {
 }
 
 export async function submitQuiz(
-  userId: string,
+  ctx: TenantContext,
   quizId: string,
   answers: AnswerInput[],
 ) {
-  const quiz = await prisma.quiz.findUnique({
-    where: { id: quizId },
+  const userId = ctx.user.id;
+  // Tenant-scoped quiz lookup: cross-tenant quiz ids resolve as "not found".
+  const quiz = await prisma.quiz.findFirst({
+    where: { id: quizId, tenantId: ctx.tenant.id },
     select: {
       id: true,
       questions: true,
@@ -23,7 +26,7 @@ export async function submitQuiz(
     },
   });
   if (!quiz) throw notFound("Quiz not found");
-  const enrolled = await isEnrolled(userId, quiz.module.courseId);
+  const enrolled = await isEnrolled(userId, quiz.module.courseId, ctx.tenant.id);
   if (!enrolled) throw notFound("Enroll in the course first");
 
   const questions = fromJson<QuestionShape[]>(quiz.questions);
@@ -43,16 +46,24 @@ export async function submitQuiz(
   const total = questions.length;
   const passed = total > 0 && score >= Math.ceil(total / 2);
 
-  await prisma.quizResult.upsert({
-    where: { quizId_userId: { quizId, userId } },
-    update: { score, total, passed },
-    create: { quizId, userId, score, total, passed },
+  const existing = await prisma.quizResult.findFirst({
+    where: { quizId, userId, tenantId: ctx.tenant.id },
   });
+  if (existing) {
+    await prisma.quizResult.update({
+      where: { id: existing.id },
+      data: { score, total, passed },
+    });
+  } else {
+    await prisma.quizResult.create({
+      data: { quizId, userId, tenantId: ctx.tenant.id, score, total, passed },
+    });
+  }
   return { score, total, passed };
 }
 
-export async function getLatestQuizResult(userId: string, quizId: string) {
-  return prisma.quizResult.findUnique({
-    where: { quizId_userId: { quizId, userId } },
+export async function getLatestQuizResult(ctx: TenantContext, quizId: string) {
+  return prisma.quizResult.findFirst({
+    where: { quizId, userId: ctx.user.id, tenantId: ctx.tenant.id },
   });
 }

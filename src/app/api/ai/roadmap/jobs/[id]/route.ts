@@ -23,16 +23,24 @@ export async function GET(
     }
 
     if (job.status === "COMPLETED" && job.roadmapId) {
-      const roadmap = await roadmapReadRepo.getMyRoadmap(user.id, job.roadmapId);
+      // The job's tenantId was written server-side at enqueue time; scope the
+      // roadmap fetch to it so a multi-tenant user cannot view the roadmap
+      // from outside its tenant context.
+      const roadmap = await roadmapReadRepo.getMyRoadmap(user.id, job.roadmapId, job.tenantId);
       if (roadmap) {
-        return ok({ status: "COMPLETED", jobId: job.id, roadmap });
+        return ok({ status: "COMPLETED", jobId: job.id, roadmap, progressStage: job.progressStage });
       }
     }
 
     if (job.status === "FAILED") {
-      return ok({ status: "FAILED", jobId: job.id, errorCode: job.lastErrorCode });
+      return ok({ status: "FAILED", jobId: job.id, errorCode: job.lastErrorCode, progressStage: job.progressStage });
     }
 
-    return ok({ status: job.status, jobId: job.id });
+    return ok({
+      status: job.status,
+      jobId: job.id,
+      progressStage: job.progressStage,
+      interpretation: job.interpretation ?? null,
+    });
   });
 }

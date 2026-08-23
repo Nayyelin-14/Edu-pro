@@ -1,6 +1,7 @@
 import { OtpPurpose } from "@/generated/prisma/enums";
 import type { PublicUser } from "@/lib/auth";
 import { publicUser } from "@/lib/auth";
+import { bestEffort } from "@/lib/async";
 import { sha256, randomOpaqueToken } from "@/lib/crypto";
 import { appUrl, sendPasswordResetEmail, sendVerificationEmail } from "@/lib/email";
 import { badRequest } from "@/lib/errors";
@@ -26,7 +27,7 @@ export async function resendVerification(email: string): Promise<void> {
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || user.emailVerifiedAt) return;
   const code = await issueOtp(user.id, OtpPurpose.EMAIL_VERIFICATION);
-  await sendVerificationEmail(user.email, code);
+  await bestEffort("email.verification", sendVerificationEmail(user.email, code));
 }
 
 export async function forgotPassword(email: string): Promise<void> {
@@ -41,7 +42,9 @@ export async function forgotPassword(email: string): Promise<void> {
     },
   });
   const resetUrl = `${appUrl()}/reset-password?token=${rawToken}`;
-  await sendPasswordResetEmail(user.email, resetUrl);
+  // The reset token is already committed; a failed email must not surface as
+  // an error (the user can request another link).
+  await bestEffort("email.password_reset", sendPasswordResetEmail(user.email, resetUrl));
 }
 
 export async function resetPassword(

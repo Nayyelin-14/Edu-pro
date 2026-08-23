@@ -3,6 +3,7 @@ import { ok, parseBody, run } from "@/lib/api";
 import { updateCommentSchema } from "@/lib/validation/comment";
 import { updateComment, deleteComment } from "@/server/services/comment.service";
 import { requireUser } from "@/server/guards";
+import { requireTenantContext } from "@/server/tenant-context";
 
 export const dynamic = "force-dynamic";
 
@@ -11,10 +12,11 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    // TENANT MODE: only comments inside the active tenant are mutable.
+    const ctx = await requireTenantContext();
     const { id } = await params;
     const input = updateCommentSchema.parse(await parseBody(req));
-    return ok(await updateComment(user.id, id, input.content));
+    return ok(await updateComment(ctx, id, input.content));
   });
 }
 
@@ -23,8 +25,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    // TENANT MODE: only comments inside the active tenant are mutable.
+    const ctx = await requireTenantContext();
     const { id } = await params;
-    return ok(await deleteComment(user.id, id));
+    return ok(await deleteComment(ctx, id));
   });
 }

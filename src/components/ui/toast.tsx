@@ -18,7 +18,7 @@ interface Toast {
 }
 
 interface ToastContextValue {
-  toast: (message: string, kind?: ToastKind) => void;
+  toast: (message: string, kind?: ToastKind, title?: string) => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ toast: () => {} });

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { notFound } from "@/lib/errors";
 import type { Prisma } from "@/generated/prisma/client";
+import type { TenantContext } from "@/server/tenant-context";
 
 export interface CatalogQuery {
   search?: string;
@@ -54,6 +55,8 @@ export async function listPublishedCourses(query: CatalogQuery) {
       take: query.pageSize,
       include: {
         category: { select: { id: true, name: true, slug: true } },
+        instructor: { select: { username: true } },
+        _count: { select: { modules: true } },
       },
     }),
     prisma.course.count({ where }),
@@ -74,11 +77,15 @@ export async function listCategories() {
 }
 
 /** Public course page: lesson bodies are stripped unless the lesson is free. */
-export async function getCoursePage(slug: string) {
+export async function getCoursePage(
+  slug: string,
+  opts?: { allowUnpublished?: boolean },
+) {
   const course = await prisma.course.findUnique({
     where: { slug },
     include: {
       category: { select: { id: true, name: true, slug: true } },
+      instructor: { select: { id: true, username: true, avatar: true } },
       modules: {
         orderBy: { position: "asc" },
         include: {
@@ -115,14 +122,18 @@ export async function getCoursePage(slug: string) {
       },
     },
   });
-  if (!course || !course.isPublished) throw notFound("Course not found");
+  if (!course) throw notFound("Course not found");
+  if (!course.isPublished && !opts?.allowUnpublished)
+    throw notFound("Course not found");
   return course;
 }
 
-export async function getCourseForLearning(courseId: string, userId: string) {
+export async function getCourseForLearning(ctx: TenantContext, courseId: string) {
+  const userId = ctx.user.id;
   const [course, completedRows] = await Promise.all([
-    prisma.course.findUnique({
-      where: { id: courseId },
+    // Tenant-scoped lookup: cross-tenant course ids resolve as "not found".
+    prisma.course.findFirst({
+      where: { id: courseId, tenantId: ctx.tenant.id },
       include: {
         modules: {
           orderBy: { position: "asc" },
@@ -146,7 +157,7 @@ export async function getCourseForLearning(courseId: string, userId: string) {
       },
     }),
     prisma.completedLesson.findMany({
-      where: { userId },
+      where: { userId, tenantId: ctx.tenant.id },
       select: { lessonId: true },
     }),
   ]);

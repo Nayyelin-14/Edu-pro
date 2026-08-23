@@ -2,9 +2,10 @@
  * Mock AI provider for testing.
  *
  * Returns a deterministic plan without calling any external API.
- * Useful for unit tests and CI where GEMINI_API_KEY is not available.
+ * Useful for unit tests and CI where no AI API key is available.
  */
-import type { AIProvider, PlannerContext, AIRoadmapPlan, AIRoadmapStageInput } from "./provider";
+import type { AIProvider, PlannerContext, AIRoadmapPlan, AIRoadmapStageInput, GoalInterpretation } from "./provider";
+import { analyzeGoal } from "./retrieval";
 
 export interface MockProviderOptions {
   /** Override the default deterministic plan. */
@@ -39,6 +40,12 @@ export function createMockProvider(options: MockProviderOptions = {}): AIProvide
 
       return buildDeterministicPlan(ctx);
     },
+
+    // Deterministic mirror of the real NIM interpretation: zero network, so
+    // unit tests and CI exercise the same interpretation pipeline shape.
+    async interpretGoal(input: { goal: string; language: "en" | "th" }): Promise<GoalInterpretation> {
+      return analyzeGoal(input.goal);
+    },
   };
 }
 
@@ -47,7 +54,7 @@ export function createMockProvider(options: MockProviderOptions = {}): AIProvide
  * This mimics what the real LLM would produce but is fully predictable.
  */
 function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
-  const { candidates, progress, durationWeeks, goal, skills, level } = ctx;
+  const { candidates, progress, durationWeeks, goal, skills, normalizedGoal } = ctx;
 
   // Filter out completed courses from candidates
   const availableCandidates = candidates.filter((c) => {
@@ -57,7 +64,7 @@ function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
 
   // Calculate weeks per stage
   const maxStages = Math.min(8, availableCandidates.length + 1);
-  const weeksPerStage = Math.max(1, Math.floor(durationWeeks / maxStages));
+  const weeksPerStage = Math.max(1, Math.floor(durationWeeks / Math.max(1, maxStages)));
 
   const stages: AIRoadmapStageInput[] = [];
 
@@ -69,6 +76,7 @@ function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
     if (!course) continue;
     const weekStart = i * weeksPerStage + 1;
     const weekEnd = Math.min((i + 1) * weeksPerStage, durationWeeks);
+    const courseSkills = course.skills?.length ? course.skills : skills;
 
     stages.push({
       stageNumber: i + 1,
@@ -78,8 +86,10 @@ function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
       weekStart,
       weekEnd,
       courseKey: course.key,
-      reason: `This course covers ${skills.join(", ")} which aligns with your goal to ${goal}.`,
+      reason: `This course covers ${courseSkills.join(", ")} which aligns with your goal to ${goal}.`,
       isTopic: false,
+      skills: courseSkills,
+      milestones: [`Confidently apply ${courseSkills.join(", ")} to real tasks.`],
     });
   }
 
@@ -102,11 +112,12 @@ function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
     });
   }
 
-  // If no candidates at all, create a single topic stage
+  // If no candidates at all, the service returns the unavailable plan without
+  // calling the provider. This branch is a safety net only.
   if (stages.length === 0) {
     stages.push({
       stageNumber: 1,
-      title: goal,
+      title: normalizedGoal.role ? `Learning ${normalizedGoal.role}` : goal,
       description: "A suggested learning topic with no matching EduPro course yet.",
       goal: "Explore this topic through external resources.",
       weekStart: 1,
@@ -118,8 +129,13 @@ function buildDeterministicPlan(ctx: PlannerContext): AIRoadmapPlan {
   }
 
   return {
-    title: `Learning Roadmap: ${goal}`,
-    summary: `A personalized ${durationWeeks}-week roadmap for ${goal} at ${level.toLowerCase()} level. Includes ${stages.filter((s) => !s.isTopic).length} EduPro courses and ${stages.filter((s) => s.isTopic).length} suggested topic(s).`,
+    title: normalizedGoal.role
+      ? `${normalizedGoal.role
+          .split(" ")
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ")} Foundations`
+      : `Learning Path: ${goal}`,
+    summary: `A personalized ${durationWeeks}-week path for ${goal} at ${ctx.level.toLowerCase()} level. Includes ${stages.filter((s) => !s.isTopic).length} EduPro courses and ${stages.filter((s) => s.isTopic).length} suggested topic(s).`,
     stages,
   };
 }

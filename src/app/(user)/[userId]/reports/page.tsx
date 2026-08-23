@@ -3,10 +3,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState, type FormEvent } from "react";
-import { Flag, Inbox } from "lucide-react";
+import { CheckCircle, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
@@ -41,10 +39,11 @@ function ReportsInner() {
   const initialCourseId = searchParams.get("courseId") ?? "";
 
   const [courseId, setCourseId] = useState(initialCourseId);
-  const [reason, setReason] = useState("");
+  const [issueType, setIssueType] = useState("");
   const [details, setDetails] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const reportsQuery = useQuery({
     queryKey: ["my-reports"],
@@ -64,10 +63,16 @@ function ReportsInner() {
     try {
       await apiFetch("/api/reports", {
         method: "POST",
-        body: JSON.stringify({ courseId, reason, details: details || undefined }),
+        body: JSON.stringify({
+          courseId,
+          reason: issueType,
+          details: details || undefined,
+        }),
       });
-      setReason("");
+      setCourseId(initialCourseId);
+      setIssueType("");
       setDetails("");
+      setSubmitted(true);
       toast(t.reports.reportSubmitted, "success");
       void qc.invalidateQueries({ queryKey: ["my-reports"] });
     } catch (err) {
@@ -97,19 +102,35 @@ function ReportsInner() {
         subtitle={t.reports.subtitle}
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* New report form */}
-        <Card className="lg:col-span-7">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Flag className="size-4 text-primary" />
-              {t.reports.newReport}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <div className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-5 shadow-sm lg:col-span-2">
+          <h2 className="mb-4 text-title-lg font-bold text-on-surface">
+            {t.reports.newReport}
+          </h2>
+          {submitted ? (
+            <div className="py-8 text-center">
+              <CheckCircle className="mx-auto mb-3 size-12 text-success" />
+              <p className="mb-1 font-semibold text-on-surface">
+                {t.reports.submittedTitle}
+              </p>
+              <p className="mb-4 text-body-md text-on-surface-variant">
+                {t.reports.submittedDescription}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSubmitted(false)}
+                className="text-label-md font-medium text-primary hover:underline"
+              >
+                {t.reports.submitAnother}
+              </button>
+            </div>
+          ) : (
             <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="course">{t.reports.courseLabel}</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="course" className="text-label-md">
+                  {t.reports.courseLabel}
+                </Label>
                 <Select
                   id="course"
                   value={courseId}
@@ -126,83 +147,91 @@ function ReportsInner() {
                   ))}
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="reason">{t.reports.reasonLabel}</Label>
-                <Input
-                  id="reason"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
+              <div className="space-y-1.5">
+                <Label htmlFor="issueType" className="text-label-md">
+                  {t.reports.issueType}
+                </Label>
+                <Select
+                  id="issueType"
+                  value={issueType}
+                  onChange={(e) => setIssueType(e.target.value)}
                   required
-                  maxLength={120}
-                  placeholder={t.reports.reasonPlaceholder}
-                />
+                >
+                  <option value="" disabled>
+                    {t.reports.selectIssueType}
+                  </option>
+                  {t.reports.issueTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
+                </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="details">{t.reports.detailsLabel}</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="details" className="text-label-md">
+                  {t.reports.descriptionLabel}
+                </Label>
                 <Textarea
                   id="details"
                   value={details}
                   onChange={(e) => setDetails(e.target.value)}
+                  rows={4}
                   maxLength={3000}
+                  placeholder={t.reports.descriptionPlaceholder}
                 />
               </div>
               {error && <Alert variant="error">{error}</Alert>}
-              <Button type="submit" disabled={loading}>
-                {loading ? t.reports.submitting : t.reports.submit}
-              </Button>
+              <div className="flex justify-end">
+                <Button type="submit" disabled={loading}>
+                  {loading ? t.reports.submitting : t.reports.submit}
+                </Button>
+              </div>
             </form>
-          </CardContent>
-        </Card>
+          )}
+        </div>
 
         {/* My reports */}
-        <Card className="lg:col-span-5">
-          <CardHeader>
-            <CardTitle>{t.reports.myReports}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {reportsQuery.isLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-14 w-full" />
-                <Skeleton className="h-14 w-full" />
-              </div>
-            ) : reports.length === 0 ? (
-              <EmptyState
-                icon={<Inbox className="size-6" />}
-                title={t.reports.noReports}
-                className="border-0 py-10"
-              />
-            ) : (
-              <ul className="space-y-3">
-                {reports.map((r) => (
-                  <li
-                    key={r.id}
-                    className="rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="line-clamp-1 font-medium text-on-surface">
-                          {r.course.title}
-                        </p>
-                        <p className="mt-0.5 line-clamp-2 text-label-sm text-on-surface-variant">
-                          {r.reason}
-                        </p>
-                      </div>
-                      <StatusBadge
-                        status={r.status}
-                        label={statusLabel(r.status)}
-                        variant={statusToVariant(r.status)}
-                        className="shrink-0"
-                      />
-                    </div>
-                    <p className="mt-2 text-label-sm text-muted-foreground">
-                      {t.reports.submittedOn(new Date(r.createdAt).toLocaleDateString())}
+        <div className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-5 shadow-sm">
+          <h2 className="mb-4 text-title-lg font-bold text-on-surface">
+            {t.reports.myReports}
+          </h2>
+          {reportsQuery.isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
+            </div>
+          ) : reports.length === 0 ? (
+            <EmptyState
+              icon={<Inbox className="size-6" />}
+              title={t.reports.noReports}
+              className="border-0 py-10"
+            />
+          ) : (
+            <ul className="space-y-3">
+              {reports.map((r) => (
+                <li key={r.id} className="rounded-xl bg-surface-container-low p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="truncate text-label-sm font-semibold text-on-surface">
+                      {r.course.title}
                     </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+                    <StatusBadge
+                      status={r.status}
+                      label={statusLabel(r.status)}
+                      variant={statusToVariant(r.status)}
+                      className="shrink-0"
+                    />
+                  </div>
+                  <p className="mb-1 line-clamp-2 text-label-sm text-on-surface-variant">
+                    {r.reason}
+                  </p>
+                  <p className="font-mono text-[10px] text-on-surface-variant/70">
+                    {new Date(r.createdAt).toLocaleDateString()}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

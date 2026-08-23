@@ -1,48 +1,126 @@
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { notFound } from "@/lib/errors";
+import { badRequest, notFound } from "@/lib/errors";
+import type { TenantContext } from "@/server/tenant-context";
 
-export async function enroll(userId: string, courseId: string) {
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
-    select: { id: true, isPublished: true },
+/**
+ * Atomically creates an enrollment (guarded by the unique userId_courseId
+ * constraint) and bumps the course student count in the same transaction.
+ * Safe to run concurrently: duplicate attempts are skipped, never crash.
+ */
+export async function enrollInTransaction(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  courseId: string,
+  tenantId: string,
+): Promise<{ created: boolean }> {
+  const result = await tx.enrollment.createMany({
+    data: [{ userId, courseId, tenantId }],
+    skipDuplicates: true,
+  });
+  if (result.count > 0) {
+    await tx.course.update({
+      where: { id: courseId },
+      data: { studentCount: { increment: 1 } },
+    });
+  }
+  return { created: result.count > 0 };
+}
+
+/** Creates an enrollment in its own transaction. Returns whether it was new. */
+export async function createEnrollment(
+  userId: string,
+  courseId: string,
+  tenantId: string,
+): Promise<{ created: boolean }> {
+  return prisma.$transaction((tx) => enrollInTransaction(tx, userId, courseId, tenantId), {
+    // Generous window: concurrent interactive transactions queue on the pooled
+    // connection; the default 2s maxWait fails 100-way races with P2028.
+    maxWait: 20_000,
+    timeout: 30_000,
+  });
+}
+
+export async function enroll(ctx: TenantContext, courseId: string) {
+  const userId = ctx.user.id;
+  // Tenant-scoped lookup: a cross-tenant course id resolves as "not found".
+  const course = await prisma.course.findFirst({
+    where: { id: courseId, tenantId: ctx.tenant.id },
+    select: { id: true, isPublished: true, price: true },
   });
   if (!course || !course.isPublished) throw notFound("Course not found");
 
-  const existing = await prisma.enrollment.findUnique({
-    where: { userId_courseId: { userId, courseId } },
-  });
-  if (existing) return { alreadyEnrolled: true };
+  // Paid courses require a completed (PAID) order before enrollment.
+  if (course.price > 0) {
+    const paid = await prisma.order.findFirst({
+      where: { userId, courseId, status: "PAID" },
+      select: { id: true },
+    });
+    if (!paid) {
+      throw badRequest("This course requires payment. Please complete checkout first.");
+    }
+  }
 
-  await prisma.$transaction([
-    prisma.enrollment.create({ data: { userId, courseId } }),
-    prisma.course.update({
-      where: { id: courseId },
-      data: { studentCount: { increment: 1 } },
-    }),
-  ]);
-  return { alreadyEnrolled: false };
+  const { created } = await createEnrollment(userId, courseId, ctx.tenant.id);
+  return { alreadyEnrolled: !created };
 }
 
+/**
+ * TENANT-AWARE enrollment check. `tenantId` MUST come from a trusted
+ * TenantContext (or the tenant of the resource being acted on).
+ */
 export async function isEnrolled(
   userId: string,
   courseId: string,
+  tenantId: string,
 ): Promise<boolean> {
-  const row = await prisma.enrollment.findUnique({
-    where: { userId_courseId: { userId, courseId } },
+  const row = await prisma.enrollment.findFirst({
+    where: { userId, courseId, tenantId },
     select: { id: true },
   });
   return row !== null;
 }
 
-export async function getEnrollmentStatus(userId: string, courseId: string) {
-  const enrolled = await isEnrolled(userId, courseId);
+export async function getEnrollmentStatus(ctx: TenantContext, courseId: string) {
+  const enrolled = await isEnrolled(ctx.user.id, courseId, ctx.tenant.id);
   return { enrolled };
 }
 
-export async function getUserEnrollments(userId: string) {
+/** Progress for a single enrollment, or null if the user is not enrolled. */
+export async function getEnrollmentProgress(ctx: TenantContext, courseId: string) {
+  const userId = ctx.user.id;
+  const enrollment = await prisma.enrollment.findFirst({
+    where: { userId, courseId, tenantId: ctx.tenant.id },
+    select: {
+      course: {
+        select: {
+          modules: {
+            select: { lessons: { select: { id: true } } },
+          },
+        },
+      },
+    },
+  });
+  if (!enrollment) return null;
+
+  const completedRows = await prisma.completedLesson.findMany({
+    where: { userId, lesson: { module: { courseId } } },
+    select: { lessonId: true },
+  });
+  const completedSet = new Set(completedRows.map((c) => c.lessonId));
+  const lessons = enrollment.course.modules.flatMap((m) => m.lessons);
+  const completedLessons = lessons.filter((l) => completedSet.has(l.id)).length;
+  const totalLessons = lessons.length;
+  return {
+    completedLessons,
+    totalLessons,
+    percent: totalLessons === 0 ? 0 : Math.round((completedLessons / totalLessons) * 100),
+  };
+}
+
+export async function getUserEnrollments(ctx: TenantContext) {
   const rows = await prisma.enrollment.findMany({
-    where: { userId },
+    where: { userId: ctx.user.id, tenantId: ctx.tenant.id },
     include: {
       course: {
         include: {
@@ -59,7 +137,7 @@ export async function getUserEnrollments(userId: string) {
   });
 
   const completedRows = await prisma.completedLesson.findMany({
-    where: { userId },
+    where: { userId: ctx.user.id, tenantId: ctx.tenant.id },
     select: { lessonId: true },
   });
   const completedSet = new Set(completedRows.map((c) => c.lessonId));
@@ -89,20 +167,32 @@ export async function getUserEnrollments(userId: string) {
   });
 }
 
-export async function listEnrollments(input: {
-  page: number;
-  pageSize: number;
-  search?: string;
-  status?: "all" | "active" | "completed" | "dropped";
-}) {
-  const where: Prisma.EnrollmentWhereInput = input.search
-    ? {
-        OR: [
-          { user: { username: { contains: input.search, mode: "insensitive" } } },
-          { course: { title: { contains: input.search, mode: "insensitive" } } },
-        ],
-      }
-    : {};
+export async function listEnrollments(
+  input: {
+    page: number;
+    pageSize: number;
+    search?: string;
+    status?: "all" | "active" | "completed" | "dropped";
+  },
+  scope: {
+    /** TENANT MODE: both fields set. PLATFORM MODE (SUPERADMIN): omit both. */
+    tenantId?: string;
+    instructorId?: string;
+  },
+) {
+  const where: Prisma.EnrollmentWhereInput = {
+    // TENANT MODE: the active tenant is a hard filter.
+    ...(scope.tenantId ? { tenantId: scope.tenantId } : {}),
+    ...(input.search
+      ? {
+          OR: [
+            { user: { username: { contains: input.search, mode: "insensitive" } } },
+            { course: { title: { contains: input.search, mode: "insensitive" } } },
+          ],
+        }
+      : {}),
+    ...(scope.instructorId ? { course: { instructorId: scope.instructorId } } : {}),
+  };
   const [items, totalCount] = await Promise.all([
     prisma.enrollment.findMany({
       where,
@@ -177,14 +267,18 @@ export async function listEnrollments(input: {
     pageSize: input.pageSize,
   };
 }
-export async function deleteEnrollment(userId: string, courseId: string) {
-  const existing = await prisma.enrollment.findUnique({
-    where: { userId_courseId: { userId, courseId } },
+/**
+ * Staff-side enrollment removal. `tenantId` MUST come from the trusted course
+ * row (see assertCourseOwner) or a TenantContext — never client input.
+ */
+export async function deleteEnrollment(userId: string, courseId: string, tenantId: string) {
+  const existing = await prisma.enrollment.findFirst({
+    where: { userId, courseId, tenantId },
   });
   if (!existing) throw notFound("Enrollment not found");
   await prisma.$transaction([
     prisma.enrollment.delete({
-      where: { userId_courseId: { userId, courseId } },
+      where: { userId_courseId_tenantId: { userId, courseId, tenantId } },
     }),
     prisma.course.update({
       where: { id: courseId },

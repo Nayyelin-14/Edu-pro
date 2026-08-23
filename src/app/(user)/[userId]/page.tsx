@@ -6,5 +6,5 @@ export default async function UserIndexPage({
   params: Promise<{ userId: string }>;
 }) {
   const { userId } = await params;
-  redirect(`/${userId}/profile`);
+  redirect(`/${userId}/dashboard`);
 }

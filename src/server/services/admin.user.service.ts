@@ -12,7 +12,7 @@ export async function createAdmin(input: {
 }): Promise<void> {
   const expected = process.env.ADMIN_INVITE_TOKEN;
   if (!expected || !safeEqual(input.inviteToken, expected)) {
-    throw unauthorized("Invalid admin invite token");
+    throw unauthorized("Invalid staff invite token");
   }
   const existing = await prisma.user.findFirst({
     where: { OR: [{ username: input.username }, { email: input.email }] },
@@ -20,7 +20,7 @@ export async function createAdmin(input: {
   });
   if (existing) throw conflict("Username or email is already in use");
   const password = await hashPassword(input.password);
-  await prisma.user.create({
+  const user = await prisma.user.create({
     data: {
       username: input.username,
       email: input.email,
@@ -29,21 +29,44 @@ export async function createAdmin(input: {
       emailVerifiedAt: new Date(),
     },
   });
+  // TENANT ONBOARDING: invited staff join the open default tenant with
+  // INSTRUCTOR (author) authority. Other tenants stay membership-gated.
+  const defaultTenant = await prisma.tenant.findUnique({
+    where: { slug: process.env.DEFAULT_TENANT_SLUG || "default" },
+    select: { id: true },
+  });
+  if (defaultTenant) {
+    await prisma.tenantMembership.upsert({
+      where: {
+        userId_tenantId: { userId: user.id, tenantId: defaultTenant.id },
+      },
+      update: { role: "INSTRUCTOR" },
+      create: {
+        userId: user.id,
+        tenantId: defaultTenant.id,
+        role: "INSTRUCTOR",
+      },
+    });
+  }
 }
 
 export async function listUsers(input: {
   search?: string;
+  role?: UserRole;
   page: number;
   pageSize: number;
 }) {
-  const where: Prisma.UserWhereInput = input.search
-    ? {
-        OR: [
-          { username: { contains: input.search, mode: "insensitive" } },
-          { email: { contains: input.search, mode: "insensitive" } },
-        ],
-      }
-    : {};
+  const where: Prisma.UserWhereInput = {
+    ...(input.role ? { role: input.role } : {}),
+    ...(input.search
+      ? {
+          OR: [
+            { username: { contains: input.search, mode: "insensitive" } },
+            { email: { contains: input.search, mode: "insensitive" } },
+          ],
+        }
+      : {}),
+  };
   const [items, total] = await Promise.all([
     prisma.user.findMany({
       where,

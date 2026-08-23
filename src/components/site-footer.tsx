@@ -37,16 +37,15 @@ export function SiteFooter() {
             <div className="max-w-2xl">
               <div className="mb-4 flex items-center gap-2 text-sm font-medium text-violet-300">
                 <Sparkles className="h-4 w-4" />
-                Keep learning
+                {t.footer.keepLearning}
               </div>
 
               <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-                Your next skill starts here.
+                {t.footer.nextSkillTitle}
               </h2>
 
               <p className="mt-3 max-w-xl text-sm leading-6 text-white/50 sm:text-base">
-                Explore courses, discover new topics, and keep building skills
-                that matter.
+                {t.footer.nextSkillSubtitle}
               </p>
             </div>
 
@@ -54,15 +53,13 @@ export function SiteFooter() {
               href="/courses"
               className="group inline-flex h-12 w-fit items-center rounded-xl bg-white px-6 text-sm font-semibold text-black transition-all hover:bg-white/90 hover:shadow-[0_0_40px_rgba(139,92,246,.25)]"
             >
-              Explore courses
+              {t.footer.exploreCourses}
               <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
           </div>
         </div>
 
-        {/* =====================================================
-            MAIN FOOTER
-        ====================================================== */}
+        {/* MAIN FOOTER */}
         <div className="grid gap-12 py-14 sm:grid-cols-2 lg:grid-cols-[1.7fr_1fr_1fr_1fr] lg:py-16">
           {/* Brand */}
           <div>
@@ -75,8 +72,7 @@ export function SiteFooter() {
             </Link>
 
             <p className="mt-5 max-w-sm text-sm leading-6 text-white/45">
-              A modern learning platform designed to help you discover
-              knowledge, build practical skills, and grow with confidence.
+              {t.footer.brandTagline}
             </p>
 
             {/* Social */}
@@ -109,33 +105,33 @@ export function SiteFooter() {
 
           {/* Platform */}
           <div>
-            <h3 className="text-sm font-semibold text-white">Platform</h3>
+            <h3 className="text-sm font-semibold text-white">{t.footer.platform}</h3>
 
             <nav className="mt-5 flex flex-col gap-3">
               <FooterLink href="/courses">{t.nav.courses}</FooterLink>
 
               <FooterLink href="/about">{t.nav.about}</FooterLink>
 
-              <FooterLink href="/help">Help Center</FooterLink>
+              <FooterLink href="/help">{t.footer.helpCenter}</FooterLink>
             </nav>
           </div>
 
           {/* Company */}
           <div>
-            <h3 className="text-sm font-semibold text-white">Company</h3>
+            <h3 className="text-sm font-semibold text-white">{t.footer.company}</h3>
 
             <nav className="mt-5 flex flex-col gap-3">
-              <FooterLink href="/about">About EduPro</FooterLink>
+              <FooterLink href="/about">{t.footer.aboutEduPro}</FooterLink>
 
-              <FooterLink href="/privacy">Privacy Policy</FooterLink>
+              <FooterLink href="/privacy">{t.footer.privacyPolicy}</FooterLink>
 
-              <FooterLink href="/terms">Terms of Service</FooterLink>
+              <FooterLink href="/terms">{t.footer.termsOfService}</FooterLink>
             </nav>
           </div>
 
           {/* Contact */}
           <div>
-            <h3 className="text-sm font-semibold text-white">Get in touch</h3>
+            <h3 className="text-sm font-semibold text-white">{t.footer.contact}</h3>
 
             <div className="mt-5">
               <a
@@ -148,7 +144,7 @@ export function SiteFooter() {
             </div>
 
             <p className="mt-4 text-xs leading-5 text-white/30">
-              Have a question or need help? Our support team is here for you.
+              {t.footer.supportQuestion}
             </p>
           </div>
         </div>
@@ -157,22 +153,24 @@ export function SiteFooter() {
             BOTTOM BAR
         ====================================================== */}
         <div className="flex flex-col gap-4 border-t border-white/10 py-7 text-xs text-white/35 sm:flex-row sm:items-center sm:justify-between">
-          <p>© {new Date().getFullYear()} EduPro. All rights reserved.</p>
+          <p>
+            © {new Date().getFullYear()} EduPro. {t.footer.allRightsReserved}
+          </p>
 
           <div className="flex flex-wrap items-center gap-5">
             <Link
               href="/privacy"
               className="transition-colors hover:text-white"
             >
-              Privacy
+              {t.footer.privacy}
             </Link>
 
             <Link href="/terms" className="transition-colors hover:text-white">
-              Terms
+              {t.footer.terms}
             </Link>
 
             <Link href="/help" className="transition-colors hover:text-white">
-              Help
+              {t.footer.help}
             </Link>
           </div>
         </div>

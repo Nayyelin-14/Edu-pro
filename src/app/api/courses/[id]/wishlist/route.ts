@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { ok, run } from "@/lib/api";
 import { toggleWishlist, isWishlisted } from "@/server/services/wishlist.service";
 import { requireUser } from "@/server/guards";
+import { requireTenantContext } from "@/server/tenant-context";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    const ctx = await requireTenantContext();
     const { id } = await params;
-    return ok(await toggleWishlist(user.id, id));
+    return ok(await toggleWishlist(ctx, id));
   });
 }
 
@@ -21,9 +22,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    const ctx = await requireTenantContext();
     const { id } = await params;
-    return ok(await toggleWishlist(user.id, id));
+    return ok(await toggleWishlist(ctx, id));
   });
 }
 
@@ -32,8 +33,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   return run(async () => {
-    const user = await requireUser();
+    const ctx = await requireTenantContext();
     const { id } = await params;
-    return ok({ saved: await isWishlisted(user.id, id) });
+    return ok({ saved: await isWishlisted(ctx, id) });
   });
 }

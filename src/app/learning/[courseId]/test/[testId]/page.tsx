@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { ExamRunner } from "@/components/learning/exam-runner";
 import { isEnrolled } from "@/server/services/enrollment.service";
-import { requireUser } from "@/server/guards";
+import { resolveTenantContext } from "@/server/tenant-context";
+import { requireUserRedirect } from "@/server/guards";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -12,19 +13,22 @@ interface PageProps {
 
 export default async function TestPage({ params }: PageProps) {
   const { courseId, testId } = await params;
-  const user = await requireUser();
+  const user = await requireUserRedirect(
+    `/learning/${courseId}/test/${testId}`,
+  );
+  const ctx = await resolveTenantContext(user);
 
-  const enrolled = await isEnrolled(user.id, courseId);
+  const enrolled = await isEnrolled(user.id, courseId, ctx.tenant.id);
   if (!enrolled) redirect("/");
 
-  const test = await prisma.test.findUnique({
-    where: { id: testId },
+  const test = await prisma.test.findFirst({
+    where: { id: testId, tenantId: ctx.tenant.id },
     select: { id: true, courseId: true },
   });
   if (!test || test.courseId !== courseId) redirect("/");
 
   return (
-    <div className="h-screen w-full bg-background">
+    <div className="h-full w-full bg-background">
       {/* Top header with timer */}
       <header className="h-16 bg-card border-b border-border flex items-center justify-between px-6 sticky top-0 z-50">
         <div className="flex items-center gap-4">

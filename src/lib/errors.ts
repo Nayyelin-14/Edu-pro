@@ -45,6 +45,10 @@ export function serviceUnavailable(message = "Service unavailable"): ApiError {
   return new ApiError(503, message);
 }
 
+export function internal(message = "Internal server error"): ApiError {
+  return new ApiError(500, message);
+}
+
 export function badGateway(message = "Bad gateway"): ApiError {
   return new ApiError(502, message);
 }

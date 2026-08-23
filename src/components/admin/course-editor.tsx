@@ -4,36 +4,62 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ClipboardCheck,
   Eye,
   GripVertical,
   PlayCircle,
   Plus,
   Save,
+  Send,
   Trash2,
   FileText,
   HelpCircle,
+  XCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { PromptDialog } from "@/components/ui/prompt-dialog";
 import { cn, formatDuration } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
 import { apiFetch } from "@/lib/api-client";
+import { useAuth } from "@/hooks/use-auth";
 import { CourseDetailsForm } from "@/components/admin/course-details-form";
 import { RichTextEditor } from "@/components/admin/rich-text-editor";
+import { TestSection } from "@/components/admin/test-section";
+import { MediaUploader } from "@/components/admin/media-uploader";
 import {
   QuestionEditor,
   type DraftQuestion,
 } from "@/components/admin/question-editor";
 
+type ApprovalStatus = "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+
+function approvalBadge(status: ApprovalStatus) {
+  switch (status) {
+    case "APPROVED":
+      return { variant: "success" as const, label: "Approved" };
+    case "PENDING_REVIEW":
+      return { variant: "warning" as const, label: "Pending review" };
+    case "REJECTED":
+      return { variant: "destructive" as const, label: "Rejected" };
+    default:
+      return { variant: "secondary" as const, label: "Draft" };
+  }
+}
+
 interface Lesson {
   id: string;
   title: string;
+  type: "VIDEO" | "READING";
   videoUrl: string | null;
+  pdfUrl: string | null;
   videoDuration: number | null;
   article: string | null;
   position: number;
@@ -65,7 +91,12 @@ interface AdminCourse {
   price: number;
   isPublished: boolean;
   isFeatured: boolean;
+  approvalStatus: ApprovalStatus;
   category: { id: string; name: string } | null;
+  difficulty: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+  estimatedHours: number | null;
+  skills: string[] | null;
+  prerequisites: string[] | null;
   modules: ModuleData[];
   tests: {
     id: string;
@@ -75,14 +106,17 @@ interface AdminCourse {
     timeLimitMinutes: number;
     attemptLimit: number;
     isEnabled: boolean;
+    questions: DraftQuestion[] | null;
   }[];
 }
 
-type EditorTab = "lesson" | "quiz" | "details";
+type EditorTab = "lesson" | "quiz" | "details" | "test";
 
 export function CourseEditor({ courseId }: { courseId: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === "SUPERADMIN";
 
   const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
   const [selectedQuizId, setSelectedQuizId] = useState<string | null>(null);
@@ -91,10 +125,19 @@ export function CourseEditor({ courseId }: { courseId: string }) {
   const [saving, setSaving] = useState(false);
   const [dragLesson, setDragLesson] = useState<string | null>(null);
   const [dragModule, setDragModule] = useState<string | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptKind, setPromptKind] = useState<"module" | "lesson">("module");
+  const [promptModuleId, setPromptModuleId] = useState<string | null>(null);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    description: string;
+    action: () => Promise<void>;
+  } | null>(null);
 
   const courseQuery = useQuery({
     queryKey: ["admin-course", courseId],
-    queryFn: () => apiFetch<AdminCourse>(`/api/admin/courses/${courseId}`),
+    queryFn: () => apiFetch<AdminCourse>(`/api/staff/courses/${courseId}`),
   });
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
@@ -130,20 +173,21 @@ export function CourseEditor({ courseId }: { courseId: string }) {
       return next;
     });
 
-  const togglePublish = async () => {
+  const changeStatus = async (
+    action: "submit" | "approve" | "reject" | "draft",
+    successMsg: string,
+  ) => {
     if (!courseQuery.data) return;
+    if (action === "submit" && courseQuery.data.tests.length === 0) {
+      toast("Each course must have at least one test before submission", "error");
+      return;
+    }
     setSaving(true);
     try {
-      await apiFetch(`/api/admin/courses/${courseId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          isPublished: !courseQuery.data.isPublished,
-        }),
+      await apiFetch(`/api/staff/courses/${courseId}/${action}`, {
+        method: "POST",
       });
-      toast(
-        courseQuery.data.isPublished ? "Course unpublished" : "Course published",
-        "success",
-      );
+      toast(successMsg, "success");
       invalidate();
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
@@ -152,39 +196,59 @@ export function CourseEditor({ courseId }: { courseId: string }) {
     }
   };
 
-  const addModule = async () => {
-    const title = prompt("New module title");
-    if (!title?.trim()) return;
-    try {
-      await apiFetch("/api/admin/modules", {
-        method: "POST",
-        body: JSON.stringify({ courseId, title: title.trim() }),
-      });
-      toast("Module added", "success");
-      invalidate();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Something went wrong", "error");
-    }
+  const openAddModule = () => {
+    setPromptKind("module");
+    setPromptModuleId(null);
+    setPromptOpen(true);
   };
 
-  const addLesson = async (moduleId: string) => {
-    const title = prompt("New lesson title");
-    if (!title?.trim()) return;
+  const openAddLesson = (moduleId: string) => {
+    setPromptKind("lesson");
+    setPromptModuleId(moduleId);
+    setPromptOpen(true);
+  };
+
+  const confirmPrompt = async (value: string) => {
+    setPromptLoading(true);
     try {
-      await apiFetch("/api/admin/lessons", {
-        method: "POST",
-        body: JSON.stringify({ moduleId, title: title.trim() }),
-      });
-      toast("Lesson added", "success");
+      if (promptKind === "module") {
+        await apiFetch("/api/staff/modules", {
+          method: "POST",
+          body: JSON.stringify({ courseId, title: value }),
+        });
+        toast("Module added", "success");
+      } else {
+        if (!promptModuleId) return;
+        // New lessons are born as READING with starter content — the server
+        // rejects incomplete lessons. Switch to VIDEO in the lesson editor.
+        await apiFetch("/api/staff/lessons", {
+          method: "POST",
+          body: JSON.stringify({
+            moduleId: promptModuleId,
+            title: value,
+            type: "READING",
+            article: "<p><em>Start writing your lesson…</em></p>",
+          }),
+        });
+        toast("Lesson added", "success");
+      }
       invalidate();
+      setPromptOpen(false);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
+    } finally {
+      setPromptLoading(false);
     }
   };
 
   const addQuiz = async (moduleId: string) => {
+    const mod = courseQuery.data?.modules.find((m) => m.id === moduleId);
+    if (mod && mod.quizzes.length > 0) {
+      toast("This module already has a quiz", "error");
+      return;
+    }
     try {
-      await apiFetch("/api/admin/quizzes", {
+      await apiFetch("/api/staff/quizzes", {
         method: "POST",
         body: JSON.stringify({ moduleId, title: "New quiz" }),
       });
@@ -243,7 +307,7 @@ export function CourseEditor({ courseId }: { courseId: string }) {
       .map((id, index) => ({ id, position: byId.get(id)?.position ?? index }))
       .filter((x) => byId.has(x.id));
     try {
-      await applyOrder(items, (id) => `/api/admin/lessons/${id}`);
+      await applyOrder(items, (id) => `/api/staff/lessons/${id}`);
       toast("Lessons reordered", "success");
       invalidate();
     } catch (err) {
@@ -258,7 +322,7 @@ export function CourseEditor({ courseId }: { courseId: string }) {
       .map((id, index) => ({ id, position: byId.get(id)?.position ?? index }))
       .filter((x) => byId.has(x.id));
     try {
-      await applyOrder(items, (id) => `/api/admin/modules/${id}`);
+      await applyOrder(items, (id) => `/api/staff/modules/${id}`);
       toast("Modules reordered", "success");
       invalidate();
     } catch (err) {
@@ -289,9 +353,10 @@ export function CourseEditor({ courseId }: { courseId: string }) {
           </p>
           <h1 className="truncate text-2xl font-bold">{course.title}</h1>
           <div className="mt-1 flex items-center gap-2">
-            <Badge variant={course.isPublished ? "success" : "secondary"}>
-              {course.isPublished ? "Published" : "Draft"}
-            </Badge>
+            {(() => {
+              const badge = approvalBadge(course.approvalStatus);
+              return <Badge variant={badge.variant}>{badge.label}</Badge>;
+            })()}
             <span className="text-xs text-muted-foreground">
               {course.modules.length} modules ·{" "}
               {course.modules.reduce((a, m) => a + m.lessons.length, 0)} lessons
@@ -305,9 +370,53 @@ export function CourseEditor({ courseId }: { courseId: string }) {
               Preview
             </Link>
           </Button>
-          <Button size="sm" onClick={() => void togglePublish()} disabled={saving}>
-            {course.isPublished ? "Unpublish" : "Publish course"}
-          </Button>
+          {course.approvalStatus === "APPROVED" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void changeStatus("draft", "Course sent back to draft")}
+              disabled={saving}
+            >
+              Unpublish
+            </Button>
+          ) : null}
+          {isSuperAdmin && course.approvalStatus !== "APPROVED" ? (
+            <Button
+              size="sm"
+              onClick={() => void changeStatus("approve", "Course approved and published")}
+              disabled={saving}
+            >
+              <CheckCircle2 />
+              Approve
+            </Button>
+          ) : null}
+          {isSuperAdmin && course.approvalStatus !== "DRAFT" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => void changeStatus("reject", "Course rejected")}
+              disabled={saving}
+            >
+              <XCircle />
+              Reject
+            </Button>
+          ) : null}
+          {!isSuperAdmin &&
+          (course.approvalStatus === "DRAFT" ||
+            course.approvalStatus === "REJECTED") ? (
+            <Button
+              size="sm"
+              onClick={() =>
+                void changeStatus("submit", "Course submitted for review")
+              }
+              disabled={saving}
+            >
+              <Send />
+              {course.approvalStatus === "REJECTED"
+                ? "Resubmit for review"
+                : "Submit for review"}
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -317,7 +426,7 @@ export function CourseEditor({ courseId }: { courseId: string }) {
         <aside className="max-h-[calc(100vh-260px)] overflow-y-auto rounded-xl border bg-card lg:max-h-none">
           <div className="flex items-center justify-between border-b p-3">
             <h2 className="font-semibold">Curriculum</h2>
-            <Button variant="ghost" size="sm" onClick={() => void addModule()}>
+            <Button variant="ghost" size="sm" onClick={openAddModule}>
               <Plus />
               Module
             </Button>
@@ -382,20 +491,18 @@ export function CourseEditor({ courseId }: { courseId: string }) {
                       className="rounded p-1 text-muted-foreground hover:bg-muted-foreground/10 hover:text-destructive"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete module "${m.title}" and all its content?`)) {
-                          void (async () => {
-                            await apiFetch(`/api/admin/modules/${m.id}`, {
+                        setConfirmState({
+                          title: `Delete module "${m.title}"?`,
+                          description:
+                            "This removes the module and all of its lessons and quiz.",
+                          action: async () => {
+                            await apiFetch(`/api/staff/modules/${m.id}`, {
                               method: "DELETE",
                             });
                             toast("Module deleted", "success");
                             invalidate();
-                          })().catch((err) =>
-                            toast(
-                              err instanceof Error ? err.message : "Delete failed",
-                              "error",
-                            ),
-                          );
-                        }
+                          },
+                        });
                       }}
                       aria-label="Delete module"
                     >
@@ -491,20 +598,27 @@ export function CourseEditor({ courseId }: { courseId: string }) {
                         variant="ghost"
                         size="sm"
                         className="flex-1 text-xs"
-                        onClick={() => void addLesson(m.id)}
+                        onClick={() => openAddLesson(m.id)}
                       >
                         <Plus />
                         Lesson
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="flex-1 text-xs"
-                        onClick={() => void addQuiz(m.id)}
-                      >
-                        <HelpCircle />
-                        Quiz
-                      </Button>
+                      {m.quizzes.length === 0 ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex-1 text-xs"
+                          onClick={() => void addQuiz(m.id)}
+                        >
+                          <HelpCircle />
+                          Quiz
+                        </Button>
+                      ) : (
+                        <span className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-muted px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                          <HelpCircle className="size-3.5" />
+                          Quiz added
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}
@@ -514,7 +628,7 @@ export function CourseEditor({ courseId }: { courseId: string }) {
             <Button
               variant="outline"
               className="w-full border-dashed"
-              onClick={() => void addModule()}
+              onClick={openAddModule}
             >
               <Plus />
               New module
@@ -548,6 +662,12 @@ export function CourseEditor({ courseId }: { courseId: string }) {
               onClick={() => setSelectedTab("quiz")}
               icon={<HelpCircle className="size-4" />}
               label="Quiz editor"
+            />
+            <TabButton
+              active={selectedTab === "test"}
+              onClick={() => setSelectedTab("test")}
+              icon={<ClipboardCheck className="size-4" />}
+              label="Test editor"
             />
           </div>
 
@@ -599,9 +719,54 @@ export function CourseEditor({ courseId }: { courseId: string }) {
                   hint="Pick a quiz from the curriculum outline to edit its questions."
                 />
               ))}
+          {selectedTab === "test" && (
+              <TestSection
+                courseId={courseId}
+                tests={course.tests}
+                onChanged={invalidate}
+              />
+            )}
           </div>
         </section>
       </div>
+
+      {promptOpen && (
+        <PromptDialog
+          open
+          title={
+            promptKind === "module" ? "New module title" : "New lesson title"
+          }
+          description={
+            promptKind === "module"
+              ? "Group related lessons together. You can add a quiz to this module later."
+              : "This lesson will be added to the selected module."
+          }
+          placeholder={
+            promptKind === "module"
+              ? "e.g. Introduction"
+              : "e.g. What is machine learning?"
+          }
+          loading={promptLoading}
+          onConfirm={(value) => void confirmPrompt(value)}
+          onCancel={() => setPromptOpen(false)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!confirmState}
+        title={confirmState?.title ?? "Confirm"}
+        description={confirmState?.description}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        loading={saving}
+        onConfirm={() => {
+          const action = confirmState?.action;
+          setConfirmState(null);
+          if (action) void action();
+        }}
+        onCancel={() => setConfirmState(null)}
+      />
     </div>
   );
 }
@@ -662,6 +827,14 @@ interface LessonEditorProps {
   onDelete: () => void;
 }
 
+/**
+ * Lesson content editor (spec §17).
+ *
+ * Exactly TWO persisted types: VIDEO and READING; READING has exactly ONE
+ * source (rich text OR PDF). The type is persisted server-side — local state
+ * here is only the draft. Content payloads are atomic on save, and switching
+ * to a type/source that discards existing content asks for confirmation.
+ */
 function LessonEditor({
   module,
   lesson,
@@ -670,36 +843,88 @@ function LessonEditor({
 }: LessonEditorProps) {
   const { toast } = useToast();
   const [title, setTitle] = useState(lesson.title);
-  const [type, setType] = useState<"video" | "article">(
-    lesson.videoUrl ? "video" : "article",
+  const [type, setType] = useState<"VIDEO" | "READING">(lesson.type ?? "READING");
+  const [readingSource, setReadingSource] = useState<"article" | "pdf">(
+    lesson.pdfUrl ? "pdf" : "article",
   );
-  const [videoUrl, setVideoUrl] = useState(lesson.videoUrl ?? "");
   const [duration, setDuration] = useState(
     lesson.videoDuration ? String(lesson.videoDuration) : "",
   );
   const [article, setArticle] = useState(lesson.article ?? "");
   const [isFree, setIsFree] = useState(lesson.isFree);
-  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<
+    null | { nextType: "VIDEO" | "READING"; nextSource?: "article" | "pdf" }
+  >(null);
+
+  const hasContent =
+    !!lesson.videoUrl || !!lesson.article || !!lesson.pdfUrl;
+
+  const requestSwitch = (
+    nextType: "VIDEO" | "READING",
+    nextSource?: "article" | "pdf",
+  ) => {
+    const destructive =
+      nextType !== type || (nextType === "READING" && !!nextSource && nextSource !== readingSource);
+    if (!destructive || !hasContent) {
+      setType(nextType);
+      if (nextType === "READING" && nextSource) setReadingSource(nextSource);
+      return;
+    }
+    setPendingSwitch({ nextType, nextSource });
+  };
 
   const save = async () => {
+    // Atomic content payload per the server contract.
+    let body: Record<string, unknown>;
+    if (type === "VIDEO") {
+      if (!lesson.videoUrl) {
+        toast("Upload a video before saving this lesson", "error");
+        return;
+      }
+      body = {
+        title: title.trim(),
+        type: "VIDEO",
+        videoUrl: lesson.videoUrl,
+        article: null,
+        pdfUrl: null,
+        ...(duration ? { videoDuration: Math.max(0, Number(duration) || 0) } : {}),
+        isFree,
+      };
+    } else if (readingSource === "article") {
+      if (!article.trim()) {
+        toast("Write some content or switch the reading source", "error");
+        return;
+      }
+      body = {
+        title: title.trim(),
+        type: "READING",
+        article,
+        pdfUrl: null,
+        videoUrl: null,
+        isFree,
+      };
+    } else {
+      if (!lesson.pdfUrl) {
+        toast("Upload a PDF before saving this lesson", "error");
+        return;
+      }
+      body = {
+        title: title.trim(),
+        type: "READING",
+        pdfUrl: lesson.pdfUrl,
+        article: null,
+        videoUrl: null,
+        isFree,
+      };
+    }
+
     setSaving(true);
     try {
-      await apiFetch(`/api/admin/lessons/${lesson.id}`, {
+      await apiFetch(`/api/staff/lessons/${lesson.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          title: title.trim(),
-          videoUrl:
-            type === "video" && videoUrl.trim()
-              ? videoUrl.trim()
-              : null,
-          videoDuration:
-            type === "video" && duration
-              ? Math.max(0, Number(duration) || 0)
-              : undefined,
-          article: type === "article" ? article || null : undefined,
-          isFree,
-        }),
+        body: JSON.stringify(body),
       });
       toast("Lesson saved", "success");
       onChanged();
@@ -707,26 +932,6 @@ function LessonEditor({
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const uploadVideo = async (file: File) => {
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("folder", "lessons");
-      const res = await apiFetch<{ url: string }>("/api/uploads", {
-        method: "POST",
-        body: formData,
-      });
-      setVideoUrl(res.url);
-      setType("video");
-      toast("Video uploaded", "success");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Upload failed", "error");
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -745,77 +950,104 @@ function LessonEditor({
           />
         </div>
         <div className="flex items-center gap-2">
+          {!hasContent && (
+            <Badge variant="warning">Incomplete — add content</Badge>
+          )}
           <Button
             variant="ghost"
             size="sm"
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={async () => {
-              if (!confirm("Delete this lesson?")) return;
-              await apiFetch(`/api/admin/lessons/${lesson.id}`, {
-                method: "DELETE",
-              });
-              toast("Lesson deleted", "success");
-              onDelete();
-              onChanged();
-            }}
+            onClick={() => setDeleteOpen(true)}
           >
             <Trash2 />
             Delete
           </Button>
+          <ConfirmDialog
+            open={deleteOpen}
+            title="Delete this lesson?"
+            description="This removes the lesson and its media from the module. This action cannot be undone."
+            confirmLabel="Delete"
+            cancelLabel="Cancel"
+            destructive
+            onConfirm={() => {
+              setDeleteOpen(false);
+              void (async () => {
+                await apiFetch(`/api/staff/lessons/${lesson.id}`, {
+                  method: "DELETE",
+                });
+                toast("Lesson deleted", "success");
+                onDelete();
+                onChanged();
+              })().catch((err) =>
+                toast(
+                  err instanceof Error ? err.message : "Delete failed",
+                  "error",
+                ),
+              );
+            }}
+            onCancel={() => setDeleteOpen(false)}
+          />
+          <ConfirmDialog
+            open={!!pendingSwitch}
+            title="Change lesson type?"
+            description={
+              pendingSwitch
+                ? `This lesson already has ${
+                    lesson.videoUrl ? "a video" : "reading material"
+                  }. Switching will remove it when you save.`
+                : ""
+            }
+            confirmLabel="Switch"
+            cancelLabel="Keep current"
+            destructive
+            onConfirm={() => {
+              if (pendingSwitch) {
+                setType(pendingSwitch.nextType);
+                if (pendingSwitch.nextSource) setReadingSource(pendingSwitch.nextSource);
+              }
+              setPendingSwitch(null);
+            }}
+            onCancel={() => setPendingSwitch(null)}
+          />
         </div>
       </div>
 
-      {/* Type selector */}
+      {/* Type selector (persisted) */}
       <div>
         <Label className="mb-2 block">Lesson type</Label>
         <div className="grid grid-cols-2 gap-3">
           <TypeCard
-            active={type === "video"}
-            onClick={() => setType("video")}
+            active={type === "VIDEO"}
+            onClick={() => requestSwitch("VIDEO")}
             icon={<PlayCircle className="size-6" />}
             label="Video"
           />
           <TypeCard
-            active={type === "article"}
-            onClick={() => setType("article")}
+            active={type === "READING"}
+            onClick={() => requestSwitch("READING", readingSource)}
             icon={<FileText className="size-6" />}
-            label="Article"
+            label="Reading"
           />
         </div>
       </div>
 
-      {type === "video" ? (
+      {type === "VIDEO" ? (
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Video URL</Label>
-            <div className="flex gap-2">
-              <Input
-                value={videoUrl}
-                onChange={(e) => setVideoUrl(e.target.value)}
-                placeholder="https://res.cloudinary.com/..."
-              />
-              <Button
-                variant="outline"
-                disabled={uploading}
-                onClick={() =>
-                  document.getElementById("video-upload")?.click()
-                }
-              >
-                {uploading ? "Uploading…" : "Upload"}
-              </Button>
-              <input
-                id="video-upload"
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void uploadVideo(f);
-                  e.target.value = "";
-                }}
-              />
-            </div>
-          </div>
+          <MediaUploader
+            kind="VIDEO"
+            lessonId={lesson.id}
+            onChanged={onChanged}
+          />
+          {lesson.videoUrl ? (
+            <p className="flex items-center gap-1.5 text-sm text-emerald-600">
+              <CheckCircle2 className="size-4" /> Video uploaded & verified
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No video yet. Upload an MP4/MOV/WebM file — large files upload in
+              resumable chunks directly to storage.
+            </p>
+          )}
           <div className="space-y-2">
             <Label>Duration (seconds)</Label>
             <Input
@@ -823,23 +1055,54 @@ function LessonEditor({
               min={0}
               value={duration}
               onChange={(e) => setDuration(e.target.value)}
-              placeholder="320"
+              placeholder="auto-detected after upload"
             />
           </div>
-          {videoUrl && (
-            <div className="overflow-hidden rounded-xl border">
-              <video
-                src={videoUrl}
-                controls
-                className="aspect-video w-full bg-black"
-              />
-            </div>
-          )}
         </div>
       ) : (
-        <div className="space-y-2">
-          <Label>Article content</Label>
-          <RichTextEditor value={article} onChange={setArticle} />
+        <div className="space-y-4">
+          {/* Reading source selector: exactly one of rich text / PDF */}
+          <div>
+            <Label className="mb-2 block">Content source</Label>
+            <div className="grid grid-cols-2 gap-3 max-w-md">
+              <TypeCard
+                active={readingSource === "article"}
+                onClick={() => requestSwitch("READING", "article")}
+                icon={<FileText className="size-5" />}
+                label="Rich Text"
+              />
+              <TypeCard
+                active={readingSource === "pdf"}
+                onClick={() => requestSwitch("READING", "pdf")}
+                icon={<FileText className="size-5" />}
+                label="PDF"
+              />
+            </div>
+          </div>
+
+          {readingSource === "article" ? (
+            <div className="space-y-2">
+              <Label>Article content</Label>
+              <RichTextEditor value={article} onChange={setArticle} />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <MediaUploader
+                kind="PDF"
+                lessonId={lesson.id}
+                onChanged={onChanged}
+              />
+              {lesson.pdfUrl ? (
+                <p className="flex items-center gap-1.5 text-sm text-emerald-600">
+                  <CheckCircle2 className="size-4" /> PDF uploaded & verified
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Students get a built-in PDF viewer. Maximum size 50 MB.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -909,6 +1172,7 @@ function QuizEditor({ quiz, onChanged, onDelete }: QuizEditorProps) {
         }))
       : [],
   );
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const save = async () => {
     if (!title.trim() || questions.length === 0) {
@@ -916,7 +1180,7 @@ function QuizEditor({ quiz, onChanged, onDelete }: QuizEditorProps) {
       return;
     }
     try {
-      await apiFetch(`/api/admin/quizzes/${quiz.id}`, {
+      await apiFetch(`/api/staff/quizzes/${quiz.id}`, {
         method: "PATCH",
         body: JSON.stringify({ title: title.trim(), questions }),
       });
@@ -940,19 +1204,36 @@ function QuizEditor({ quiz, onChanged, onDelete }: QuizEditorProps) {
           variant="ghost"
           size="sm"
           className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={async () => {
-            if (!confirm("Delete this quiz?")) return;
-            await apiFetch(`/api/admin/quizzes/${quiz.id}`, {
-              method: "DELETE",
-            });
-            toast("Quiz deleted", "success");
-            onDelete();
-            onChanged();
-          }}
+          onClick={() => setDeleteOpen(true)}
         >
           <Trash2 />
           Delete
         </Button>
+        <ConfirmDialog
+          open={deleteOpen}
+          title="Delete this quiz?"
+          description="This removes the quiz from the module. This action cannot be undone."
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={() => {
+            setDeleteOpen(false);
+            void (async () => {
+              await apiFetch(`/api/staff/quizzes/${quiz.id}`, {
+                method: "DELETE",
+              });
+              toast("Quiz deleted", "success");
+              onDelete();
+              onChanged();
+            })().catch((err) =>
+              toast(
+                err instanceof Error ? err.message : "Delete failed",
+                "error",
+              ),
+            );
+          }}
+          onCancel={() => setDeleteOpen(false)}
+        />
       </div>
 
       <QuestionEditor questions={questions} onChange={setQuestions} />

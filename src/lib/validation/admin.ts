@@ -20,13 +20,23 @@ export const issueCertificateSchema = z.object({
 
 export const usersQuerySchema = z.object({
   search: z.string().trim().optional(),
+  role: z.enum(["STUDENT", "INSTRUCTOR", "SUPERADMIN"]).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
 export const coursesQuerySchema = z.object({
   search: z.string().trim().optional(),
-  status: z.enum(["ALL", "PUBLISHED", "DRAFT"]).default("ALL"),
+  status: z
+    .enum([
+      "ALL",
+      "PUBLISHED",
+      "DRAFT",
+      "PENDING_REVIEW",
+      "APPROVED",
+      "REJECTED",
+    ])
+    .default("ALL"),
   categoryId: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
