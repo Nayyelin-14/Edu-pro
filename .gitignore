@@ -43,3 +43,10 @@ prisma/*.db
 # legacy apps (kept for reference during migration)
 /Backend/node_modules
 /Frontend/node_modules
+
+# local test accounts
+TEST_ACCOUNTS.md
+
+# portfolio screenshots
+screenshots/
+scripts/

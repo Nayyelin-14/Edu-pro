@@ -66,6 +66,38 @@ export async function getMyCertificates(ctx: TenantContext) {
   });
 }
 
+/** PLATFORM MODE: full certificate registry across all tenants (superadmin). */
+export async function listAllCertificates(input: {
+  search?: string;
+  page: number;
+  pageSize: number;
+}) {
+  const where = input.search
+    ? {
+        OR: [
+          { user: { username: { contains: input.search, mode: "insensitive" as const } } },
+          { user: { email: { contains: input.search, mode: "insensitive" as const } } },
+          { course: { title: { contains: input.search, mode: "insensitive" as const } } },
+          { certificateNumber: { contains: input.search, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+  const [items, total] = await Promise.all([
+    prisma.certificate.findMany({
+      where,
+      include: {
+        user: { select: { id: true, username: true, email: true, avatar: true } },
+        course: { select: { id: true, title: true, slug: true } },
+      },
+      orderBy: { issuedAt: "desc" },
+      skip: (input.page - 1) * input.pageSize,
+      take: input.pageSize,
+    }),
+    prisma.certificate.count({ where }),
+  ]);
+  return { items, total, page: input.page, pageSize: input.pageSize };
+}
+
 export async function checkCertificate(number: string) {
   const certificate = await prisma.certificate.findUnique({
     where: { certificateNumber: number },

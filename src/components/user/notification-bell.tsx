@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, CheckCheck, X } from "lucide-react";
+import { Bell, CheckCheck, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-client";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,6 +22,14 @@ interface NotificationsResponse {
   unread: number;
 }
 
+interface NotificationBellProps {
+  /**
+   * Base path of the notification detail page. When set, items link to
+   * `${detailBase}/${id}` instead of the notification's raw link.
+   */
+  detailBase?: string;
+}
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -33,7 +41,7 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-export function NotificationBell() {
+export function NotificationBell({ detailBase }: NotificationBellProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<NotificationsResponse | null>(null);
@@ -94,6 +102,23 @@ export function NotificationBell() {
     }
   };
 
+  const removeItem = async (id: string) => {
+    const prevSnapshot = data;
+    setData((prev) => {
+      if (!prev) return prev;
+      const removed = prev.items.find((n) => n.id === id);
+      return {
+        items: prev.items.filter((n) => n.id !== id),
+        unread: removed && !removed.read ? Math.max(0, prev.unread - 1) : prev.unread,
+      };
+    });
+    try {
+      await apiFetch(`/api/me/notifications/${id}`, { method: "DELETE" });
+    } catch {
+      setData(prevSnapshot);
+    }
+  };
+
   const unread = data?.unread ?? 0;
 
   return (
@@ -150,30 +175,46 @@ export function NotificationBell() {
               </p>
             ) : (
               data.items.map((n) => (
-                <Link
+                <div
                   key={n.id}
-                  href={n.link ?? "#"}
-                  onClick={() => {
-                    setOpen(false);
-                    if (!n.read) void markRead(n.id);
-                  }}
                   className={cn(
-                    "flex flex-col gap-0.5 border-b border-outline-variant/60 px-4 py-3 transition-colors hover:bg-surface-container-low",
+                    "group relative border-b border-outline-variant/60 transition-colors hover:bg-surface-container-low",
                     !n.read && "bg-primary-container/10",
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-label-md font-semibold text-on-surface">
-                      {n.title}
-                    </p>
-                    <span className="shrink-0 text-label-xs text-on-surface-variant">
-                      {timeAgo(n.createdAt)}
-                    </span>
-                  </div>
-                  {n.body ? (
-                    <p className="text-label-sm text-on-surface-variant">{n.body}</p>
-                  ) : null}
-                </Link>
+                  <Link
+                    href={detailBase ? `${detailBase}/${n.id}` : n.link ?? "#"}
+                    onClick={() => {
+                      setOpen(false);
+                      if (!n.read) void markRead(n.id);
+                    }}
+                    className="flex flex-col gap-0.5 px-4 py-3 pr-10"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-label-md font-semibold text-on-surface">
+                        {n.title}
+                      </p>
+                      <span className="shrink-0 text-label-xs text-on-surface-variant">
+                        {timeAgo(n.createdAt)}
+                      </span>
+                    </div>
+                    {n.body ? (
+                      <p className="text-label-sm text-on-surface-variant">{n.body}</p>
+                    ) : null}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      void removeItem(n.id);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-on-surface-variant/60 transition-colors hover:bg-error/10 hover:text-error"
+                    aria-label="Delete notification"
+                    title="Delete"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
               ))
             )}
           </div>

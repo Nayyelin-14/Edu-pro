@@ -8,12 +8,12 @@ import {
   Bell,
   BookOpen,
   CheckCheck,
-  CheckCircle2,
   Flag,
   Mail,
   MailOpen,
   Map,
   ShieldAlert,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,7 @@ const TYPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
 export default function StaffNotificationsPage() {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["staff-notifications"],
@@ -99,72 +99,16 @@ export default function StaffNotificationsPage() {
     }
   };
 
-  // A certificate request notification can be responded to directly here.
-  const respondToRequest = async (
-    notifId: string,
-    requestId: string,
-    action: "APPROVE" | "REJECT",
-  ) => {
-    setBusyId(notifId);
+  const remove = async (n: NotificationItem) => {
+    setDeletingId(n.id);
     try {
-      await apiFetch(`/api/staff/certificate-requests/${requestId}`, {
-        method: "POST",
-        body: JSON.stringify({ action }),
-      });
-      toast(
-        action === "APPROVE"
-          ? "Certificate issued to the student"
-          : "Request declined",
-        "success",
-      );
+      await apiFetch(`/api/me/notifications/${n.id}`, { method: "DELETE" });
       void qc.invalidateQueries({ queryKey: ["staff-notifications"] });
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
     } finally {
-      setBusyId(null);
+      setDeletingId(null);
     }
-  };
-
-  const requestIdFrom = (item: NotificationItem): string | null => {
-    if (item.type !== "CERTIFICATE_REQUESTED" || !item.link) return null;
-    const m = item.link.match(/[?&]focus=([^&]+)/);
-    return m?.[1] ?? null;
-  };
-
-  const renderActions = (n: NotificationItem) => {
-    const requestId = requestIdFrom(n);
-    if (!requestId || busyId === n.id) {
-      if (busyId === n.id) {
-        return (
-          <div className="flex gap-2">
-            <Skeleton className="h-8 w-16" />
-            <Skeleton className="h-8 w-16" />
-          </div>
-        );
-      }
-      return null;
-    }
-    return (
-      <div className="mt-3 flex gap-2">
-        <Button
-          size="sm"
-          className="bg-emerald-600 hover:bg-emerald-700"
-          onClick={() => void respondToRequest(n.id, requestId, "APPROVE")}
-        >
-          <CheckCircle2 className="size-4" />
-          Issue
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-destructive hover:text-destructive"
-          onClick={() => void respondToRequest(n.id, requestId, "REJECT")}
-        >
-          <XCircle className="size-4" />
-          Decline
-        </Button>
-      </div>
-    );
   };
 
   return (
@@ -199,82 +143,89 @@ export default function StaffNotificationsPage() {
           <div className="divide-y divide-border/40">
             {items.map((n) => {
               const Icon = TYPE_ICON[n.type] ?? Bell;
-              const actionable = !!requestIdFrom(n);
-              const row = (
-                <div
-                  className={cn(
-                    "flex flex-col gap-1 px-5 py-4 sm:flex-row sm:items-start sm:gap-3 transition-colors hover:bg-muted/20",
-                    !n.read && "bg-primary/[0.04]",
-                  )}
-                >
-                  <div
+              return (
+                <div key={n.id} className="relative">
+                  <Link
+                    href={`/staff/notifications/${n.id}`}
+                    onClick={() => {
+                      if (!n.read) void setRead(n, true);
+                    }}
                     className={cn(
-                      "mt-0.5 flex size-9 flex-shrink-0 items-center justify-center rounded-xl",
-                      n.read
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-primary/10 text-primary",
+                      "flex flex-col gap-1 px-5 py-4 pr-24 sm:flex-row sm:items-start sm:gap-3 transition-colors hover:bg-muted/20",
+                      !n.read && "bg-primary/[0.04]",
                     )}
                   >
-                    <Icon className="size-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p
-                        className={cn(
-                          "text-sm",
-                          n.read ? "font-medium text-foreground" : "font-semibold text-foreground",
-                        )}
-                      >
-                        {n.title}
-                      </p>
-                      {!n.read && (
-                        <span className="size-1.5 flex-shrink-0 rounded-full bg-primary" />
+                    <div
+                      className={cn(
+                        "mt-0.5 flex size-9 flex-shrink-0 items-center justify-center rounded-xl",
+                        n.read
+                          ? "bg-muted text-muted-foreground"
+                          : "bg-primary/10 text-primary",
                       )}
-                      <button
-                        type="button"
-                        onClick={() => void setRead(n, !n.read)}
-                        title={n.read ? "Mark as unread" : "Mark as read"}
-                        aria-label={n.read ? "Mark as unread" : "Mark as read"}
-                        className="ml-auto rounded-full p-1.5 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-primary"
-                      >
-                        {n.read ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
-                      </button>
+                    >
+                      <Icon className="size-4" />
                     </div>
-                    {n.body && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>
-                    )}
-                    {n.actor && (
-                      <p className="mt-1 flex items-center gap-1 text-xs font-medium text-primary/80">
-                        from {n.actor.username}
-                        {n.course ? (
-                          <>
-                            <span className="text-muted-foreground/60">·</span>
-                            <span className="text-muted-foreground">{n.course.title}</span>
-                          </>
-                        ) : null}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p
+                          className={cn(
+                            "text-sm",
+                            n.read ? "font-medium text-foreground" : "font-semibold text-foreground",
+                          )}
+                        >
+                          {n.title}
+                        </p>
+                        {!n.read && (
+                          <span className="size-1.5 flex-shrink-0 rounded-full bg-primary" />
+                        )}
+                      </div>
+                      {n.body && (
+                        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{n.body}</p>
+                      )}
+                      {n.actor && (
+                        <p className="mt-1 flex items-center gap-1 text-xs font-medium text-primary/80">
+                          from {n.actor.username}
+                          {n.course ? (
+                            <>
+                              <span className="text-muted-foreground/60">·</span>
+                              <span className="text-muted-foreground">{n.course.title}</span>
+                            </>
+                          ) : null}
+                        </p>
+                      )}
+                      <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                        {n.type} · {timeAgo(n.createdAt)}
                       </p>
-                    )}
-                    <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                      {n.type} · {timeAgo(n.createdAt)}
-                    </p>
-                    {renderActions(n)}
+                    </div>
+                  </Link>
+                  <div className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void setRead(n, !n.read);
+                      }}
+                      title={n.read ? "Mark as unread" : "Mark as read"}
+                      aria-label={n.read ? "Mark as unread" : "Mark as read"}
+                      className="rounded-full p-2 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-primary"
+                    >
+                      {n.read ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingId === n.id}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void remove(n);
+                      }}
+                      title="Delete notification"
+                      aria-label="Delete notification"
+                      className="rounded-full p-2 text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
                   </div>
                 </div>
-              );
-              return actionable ? (
-                <div key={n.id}>{row}</div>
-              ) : n.link ? (
-                <Link
-                  key={n.id}
-                  href={n.link}
-                  onClick={() => {
-                    if (!n.read) void setRead(n, true);
-                  }}
-                >
-                  {row}
-                </Link>
-              ) : (
-                <div key={n.id}>{row}</div>
               );
             })}
           </div>

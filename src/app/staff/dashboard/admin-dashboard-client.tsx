@@ -46,6 +46,12 @@ interface DashboardCounts {
 
 interface DashboardStats {
   counts: DashboardCounts;
+  trends: {
+    users: number;
+    courses: number;
+    enrollments: number;
+    certificates: number;
+  };
   recentUsers: Array<{
     id: string;
     username: string;
@@ -105,6 +111,12 @@ const chartTooltip = {
   },
 };
 
+function formatRevenue(value: number): string {
+  if (value <= 0) return "$0";
+  if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
+  return `$${value.toFixed(0)}`;
+}
+
 export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps) {
   const [enrollmentGrowth, setEnrollmentGrowth] = useState<EnrollmentGrowthPoint[]>([]);
   const [revenueGrowth, setRevenueGrowth] = useState<RevenueGrowthPoint[]>([]);
@@ -135,6 +147,7 @@ export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps
   }, []);
 
   const counts = initialStats.counts;
+  const trends = initialStats.trends;
 
   return (
     <div className="space-y-6">
@@ -154,7 +167,7 @@ export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps
           value={counts.totalUsers.toLocaleString()}
           icon={Group}
           color="from-indigo-500 to-violet-600"
-          trend={12}
+          trend={trends.users}
         />
         <AdminStatCard
           label="Active Courses"
@@ -162,21 +175,21 @@ export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps
           sub={`${counts.totalCourses.toLocaleString()} total`}
           icon={BookOpen}
           color="from-cyan-500 to-blue-500"
-          trend={8}
+          trend={trends.courses}
         />
         <AdminStatCard
           label="Total Enrollments"
           value={counts.totalEnrollments.toLocaleString()}
           icon={School}
           color="from-emerald-500 to-teal-600"
-          trend={15}
+          trend={trends.enrollments}
         />
         <AdminStatCard
           label="Certificates Issued"
           value={counts.totalCertificates.toLocaleString()}
           icon={Verified}
           color="from-amber-400 to-orange-500"
-          trend={5}
+          trend={trends.certificates}
         />
       </div>
 
@@ -240,7 +253,7 @@ export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TableShell>
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
             <h3 className="text-sm font-semibold text-foreground">Top Performing Courses</h3>
@@ -270,7 +283,7 @@ export function AdminDashboardClient({ initialStats }: AdminDashboardClientProps
                     <TableTd className="font-medium">{c.title}</TableTd>
                     <TableTd className="font-mono text-right">{c.studentCount.toLocaleString()}</TableTd>
                     <TableTd className="font-mono text-right font-semibold text-emerald-500">
-                      ${(c.revenue / 1000).toFixed(0)}k
+                      {formatRevenue(c.revenue)}
                     </TableTd>
                     <TableTd className="font-mono text-right font-semibold text-amber-500">
                       {c.rating}★

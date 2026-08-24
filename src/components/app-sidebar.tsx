@@ -104,7 +104,7 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        "hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col bg-sidebar border-r border-sidebar-border transition-[width] duration-200",
+        "hidden md:flex relative flex-col shrink-0 self-stretch bg-sidebar border-r border-sidebar-border transition-[width] duration-200",
         collapsed ? "w-20" : "w-sidebar-width",
       )}
     >

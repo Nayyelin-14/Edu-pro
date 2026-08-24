@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useSidebar } from "@/components/sidebar-context";
 
 export function SidebarShell({
   children,
@@ -10,12 +9,10 @@ export function SidebarShell({
   children: React.ReactNode;
   className?: string;
 }) {
-  const { collapsed } = useSidebar();
   return (
     <div
       className={cn(
-        "flex min-h-screen flex-col transition-[margin] duration-200",
-        collapsed ? "md:ml-20" : "md:ml-sidebar-width",
+        "flex min-h-screen flex-col flex-1 min-w-0",
         className,
       )}
     >

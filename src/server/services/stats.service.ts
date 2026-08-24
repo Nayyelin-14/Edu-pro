@@ -2,6 +2,10 @@ import { prisma } from "@/lib/prisma";
 import { UserRole } from "@/generated/prisma/enums";
 
 export async function getDashboardStats() {
+  const now = Date.now();
+  const last30 = new Date(now - 30 * 86_400_000);
+  const prev30 = new Date(now - 60 * 86_400_000);
+
   const [
     totalUsers,
     totalStudents,
@@ -13,6 +17,14 @@ export async function getDashboardStats() {
     pendingReports,
     recentUsers,
     popularCourses,
+    newUsers30,
+    newUsersPrev30,
+    newEnrollments30,
+    newEnrollmentsPrev30,
+    newCertificates30,
+    newCertificatesPrev30,
+    newCourses30,
+    newCoursesPrev30,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { role: "STUDENT" } }),
@@ -46,7 +58,22 @@ export async function getDashboardStats() {
         rating: true,
       },
     }),
+    prisma.user.count({ where: { createdAt: { gte: last30 } } }),
+    prisma.user.count({ where: { createdAt: { gte: prev30, lt: last30 } } }),
+    prisma.enrollment.count({ where: { createdAt: { gte: last30 } } }),
+    prisma.enrollment.count({ where: { createdAt: { gte: prev30, lt: last30 } } }),
+    prisma.certificate.count({ where: { issuedAt: { gte: last30 } } }),
+    prisma.certificate.count({ where: { issuedAt: { gte: prev30, lt: last30 } } }),
+    prisma.course.count({ where: { createdAt: { gte: last30 } } }),
+    prisma.course.count({ where: { createdAt: { gte: prev30, lt: last30 } } }),
   ]);
+
+  // Real 30-day vs previous-30-day growth, computed from the same counters —
+  // never hardcoded. 0 in the previous window with growth reports +100%.
+  const pct = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return Math.round(((current - previous) / previous) * 100);
+  };
 
   return {
     counts: {
@@ -58,6 +85,12 @@ export async function getDashboardStats() {
       totalEnrollments,
       totalCertificates,
       pendingReports,
+    },
+    trends: {
+      users: pct(newUsers30, newUsersPrev30),
+      courses: pct(newCourses30, newCoursesPrev30),
+      enrollments: pct(newEnrollments30, newEnrollmentsPrev30),
+      certificates: pct(newCertificates30, newCertificatesPrev30),
     },
     recentUsers,
     popularCourses,

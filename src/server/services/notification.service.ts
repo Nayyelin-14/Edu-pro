@@ -55,3 +55,25 @@ export async function markNotificationRead(
   if (result.count === 0) throw notFound("Notification not found");
   return { success: true };
 }
+
+/** Fetches a single notification owned by `userId`. */
+export async function getNotification(userId: string, notificationId: string) {
+  const notification = await prisma.notification.findFirst({
+    where: { id: notificationId, userId },
+    include: {
+      actor: { select: { id: true, username: true, avatar: true } },
+      course: { select: { id: true, title: true } },
+    },
+  });
+  if (!notification) throw notFound("Notification not found");
+  return notification;
+}
+
+/** Deletes a single notification, but only if it belongs to `userId`. */
+export async function deleteNotification(userId: string, notificationId: string) {
+  const result = await prisma.notification.deleteMany({
+    where: { id: notificationId, userId },
+  });
+  if (result.count === 0) throw notFound("Notification not found");
+  return { success: true };
+}

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, Search, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -53,6 +54,8 @@ export default function AdminUsersPage() {
   const [submitted, setSubmitted] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
   const [page, setPage] = useState(1);
+  const [banTarget, setBanTarget] = useState<AdminUser | null>(null);
+  const [banLoading, setBanLoading] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-users", page, submitted, roleFilter],
@@ -67,14 +70,18 @@ export default function AdminUsersPage() {
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin-users"] });
 
   const toggleBan = async (u: AdminUser) => {
+    setBanLoading(true);
     try {
       await apiFetch(`/api/staff/users/${u.id}/${u.isBanned ? "unrestrict" : "restrict"}`, {
         method: "POST",
       });
       toast(u.isBanned ? "User unrestricted" : "User restricted", "success");
+      setBanTarget(null);
       invalidate();
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
+    } finally {
+      setBanLoading(false);
     }
   };
 
@@ -176,7 +183,7 @@ export default function AdminUsersPage() {
                           size="sm"
                           variant="outline"
                           className={u.isBanned ? "gap-1.5 text-emerald-500" : "gap-1.5 text-rose-500"}
-                          onClick={() => void toggleBan(u)}
+                          onClick={() => setBanTarget(u)}
                         >
                           {u.isBanned ? (
                             <>
@@ -199,6 +206,21 @@ export default function AdminUsersPage() {
           </table>
         </TableShell>
       )}
+
+      <ConfirmDialog
+        open={!!banTarget}
+        title={banTarget?.isBanned ? "Unban this user?" : "Ban this user?"}
+        description={
+          banTarget?.isBanned
+            ? `${banTarget?.username} will regain full access to the platform.`
+            : `${banTarget?.username} will be immediately signed out and blocked from signing in until unbanned.`
+        }
+        confirmLabel={banTarget?.isBanned ? "Unban user" : "Ban user"}
+        destructive={!banTarget?.isBanned}
+        loading={banLoading}
+        onConfirm={() => banTarget && void toggleBan(banTarget)}
+        onCancel={() => (banLoading ? undefined : setBanTarget(null))}
+      />
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between">

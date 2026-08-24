@@ -16,7 +16,7 @@ export default function UserLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-screen bg-background">
       <SidebarProvider>
         <UserNav />
         <SidebarShell>

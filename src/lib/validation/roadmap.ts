@@ -93,7 +93,7 @@ export type NormalizedStage = z.infer<typeof normalizedStageSchema>;
 export const interpretationSchema = z.object({
   role: z.string().max(120).nullable().optional(),
   roleId: z.string().max(120).nullable().optional(),
-  roleSource: z.enum(["profile", "general", "none"]),
+  roleSource: z.enum(["profile", "general", "none"]).default("none"),
   roleConfidence: z.number().min(0).max(1),
   domain: z.string().max(60).nullable().optional(),
   domainConfidence: z.number().min(0).max(1),
@@ -110,12 +110,12 @@ export const interpretationSchema = z.object({
       rationale: z.string().max(300).nullable().optional(),
       importance: z.enum(["critical", "important", "optional"]),
     })
-  ).max(20),
+  ).max(20).default([]),
   ambiguity: z.object({
     isAmbiguous: z.boolean(),
     gaps: z.array(z.string().max(60)).max(5),
     reason: z.string().max(200).nullable().optional(),
-  }),
+  }).default({ isAmbiguous: false, gaps: [], reason: null }),
 });
 
 export type InterpretationRaw = z.infer<typeof interpretationSchema>;

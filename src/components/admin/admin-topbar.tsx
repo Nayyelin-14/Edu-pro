@@ -3,8 +3,9 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useSidebar } from "@/components/sidebar-context";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/user/notification-bell";
 import Link from "next/link";
-import { LogOut, Menu, Bell } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -34,16 +35,9 @@ export function AdminTopBar({ user }: AdminTopBarProps) {
 
       <div className="flex items-center gap-2">
         <ThemeToggle />
-        <Link
-          href="/staff/notifications"
-          className="relative h-8 w-8 flex items-center justify-center rounded-xl hover:bg-muted transition-colors"
-          aria-label="Notifications"
-        >
-          <Bell className="size-4 text-muted-foreground" />
-          <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 bg-rose-500 rounded-full" />
-        </Link>
+        <NotificationBell detailBase="/staff/notifications" />
         <div className="h-6 w-px bg-border mx-2 hidden lg:block" />
-        <div className="flex items-center gap-3 cursor-pointer">
+        <Link href="/staff/profile" className="flex items-center gap-3 cursor-pointer rounded-xl p-1 transition-colors hover:bg-muted">
           {user.avatar ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img alt={user.username} src={user.avatar} className="w-8 h-8 rounded-full object-cover border border-border" />
@@ -58,7 +52,7 @@ export function AdminTopBar({ user }: AdminTopBarProps) {
             <p className="text-xs font-medium text-foreground">{user.username}</p>
             <p className="text-[10px] text-muted-foreground capitalize">{user.role.toLowerCase()}</p>
           </div>
-        </div>
+        </Link>
         <Button variant="ghost" size="icon" onClick={() => logout()}>
           <LogOut className="size-4" />
         </Button>

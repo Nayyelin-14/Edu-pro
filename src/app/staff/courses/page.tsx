@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, Plus, Trash2, ExternalLink, CircleCheck, CircleX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/hooks/use-auth";
@@ -19,6 +20,49 @@ import {
 } from "@/components/admin/admin-ui";
 
 type ApprovalStatus = "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+
+type CourseAction = "publish" | "reject" | "draft" | "submit" | "delete";
+
+const ACTION_META: Record<
+  CourseAction,
+  { title: string; description: (title: string) => string; confirm: string; destructive: boolean; toast: string }
+> = {
+  publish: {
+    title: "Approve & publish this course?",
+    description: (t) => `"${t}" will be approved and immediately visible to students in the catalog.`,
+    confirm: "Approve & publish",
+    destructive: false,
+    toast: "Course approved and published",
+  },
+  reject: {
+    title: "Reject this course?",
+    description: (t) => `"${t}" will be sent back to the instructor as rejected. They can revise and resubmit it.`,
+    confirm: "Reject course",
+    destructive: true,
+    toast: "Course rejected",
+  },
+  draft: {
+    title: "Unpublish this course?",
+    description: (t) => `"${t}" will be removed from the catalog. Enrolled students keep their access.`,
+    confirm: "Unpublish",
+    destructive: true,
+    toast: "Course unpublished",
+  },
+  submit: {
+    title: "Submit for review?",
+    description: (t) => `"${t}" will be sent to a superadmin for approval before it can be published.`,
+    confirm: "Submit for review",
+    destructive: false,
+    toast: "Submitted for review",
+  },
+  delete: {
+    title: "Delete this course?",
+    description: (t) => `"${t}" and all its modules, lessons, and enrollments will be permanently deleted. This cannot be undone.`,
+    confirm: "Delete course",
+    destructive: true,
+    toast: "Course deleted",
+  },
+};
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "ALL", label: "All" },
@@ -62,6 +106,8 @@ export default function AdminCoursesPage() {
   const [search, setSearch] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [status, setStatus] = useState("ALL");
+  const [pendingAction, setPendingAction] = useState<{ course: AdminCourse; action: CourseAction } | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-courses", status, submitted],
@@ -75,24 +121,23 @@ export default function AdminCoursesPage() {
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["admin-courses"] });
 
-  const changeStatus = async (c: AdminCourse, action: string, msg: string) => {
+  const runAction = async () => {
+    if (!pendingAction) return;
+    const { course, action } = pendingAction;
+    setActionLoading(true);
     try {
-      await apiFetch(`/api/staff/courses/${c.id}/${action}`, { method: "POST" });
-      toast(msg, "success");
+      if (action === "delete") {
+        await apiFetch(`/api/staff/courses/${course.id}`, { method: "DELETE" });
+      } else {
+        await apiFetch(`/api/staff/courses/${course.id}/${action}`, { method: "POST" });
+      }
+      toast(ACTION_META[action].toast, "success");
+      setPendingAction(null);
       invalidate();
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
-    }
-  };
-
-  const remove = async (c: AdminCourse) => {
-    if (!window.confirm(`Delete "${c.title}"? This cannot be undone.`)) return;
-    try {
-      await apiFetch(`/api/staff/courses/${c.id}`, { method: "DELETE" });
-      toast("Course deleted", "success");
-      invalidate();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "Something went wrong", "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -189,7 +234,7 @@ export default function AdminCoursesPage() {
                             variant="ghost"
                             title="Approve & publish"
                             className="text-emerald-500"
-                            onClick={() => void changeStatus(c, "publish", "Course approved and published")}
+                            onClick={() => setPendingAction({ course: c, action: "publish" })}
                           >
                             <CircleCheck className="size-4" />
                           </Button>
@@ -200,7 +245,7 @@ export default function AdminCoursesPage() {
                             variant="ghost"
                             title="Reject"
                             className="text-rose-500"
-                            onClick={() => void changeStatus(c, "reject", "Course rejected")}
+                            onClick={() => setPendingAction({ course: c, action: "reject" })}
                           >
                             <CircleX className="size-4" />
                           </Button>
@@ -209,7 +254,7 @@ export default function AdminCoursesPage() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => void changeStatus(c, "draft", "Course unpublished")}
+                            onClick={() => setPendingAction({ course: c, action: "draft" })}
                           >
                             Unpublish
                           </Button>
@@ -218,7 +263,7 @@ export default function AdminCoursesPage() {
                         (c.approvalStatus === "DRAFT" || c.approvalStatus === "REJECTED") ? (
                           <Button
                             size="sm"
-                            onClick={() => void changeStatus(c, "submit", "Submitted for review")}
+                            onClick={() => setPendingAction({ course: c, action: "submit" })}
                           >
                             {c.approvalStatus === "REJECTED" ? "Resubmit" : "Submit"}
                           </Button>
@@ -228,7 +273,7 @@ export default function AdminCoursesPage() {
                           variant="ghost"
                           title="Delete"
                           className="text-rose-500"
-                          onClick={() => void remove(c)}
+                          onClick={() => setPendingAction({ course: c, action: "delete" })}
                         >
                           <Trash2 className="size-4" />
                         </Button>
@@ -241,6 +286,21 @@ export default function AdminCoursesPage() {
           </table>
         </TableShell>
       )}
+
+      <ConfirmDialog
+        open={!!pendingAction}
+        title={pendingAction ? ACTION_META[pendingAction.action].title : ""}
+        description={
+          pendingAction
+            ? ACTION_META[pendingAction.action].description(pendingAction.course.title)
+            : ""
+        }
+        confirmLabel={pendingAction ? ACTION_META[pendingAction.action].confirm : "Confirm"}
+        destructive={pendingAction ? ACTION_META[pendingAction.action].destructive : false}
+        loading={actionLoading}
+        onConfirm={() => void runAction()}
+        onCancel={() => (actionLoading ? undefined : setPendingAction(null))}
+      />
     </div>
   );
 }
