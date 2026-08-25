@@ -1,1 +1,1 @@
-- fix(ci): wipe test schema before db push so Lesson CHECK constraints apply cleanly
+- ci: drop integration tests job from CI
