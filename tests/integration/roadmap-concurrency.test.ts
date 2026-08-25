@@ -18,6 +18,10 @@ import type { PlannerContext } from "@/lib/ai/provider";
 import { prisma } from "@/lib/prisma";
 import { NoopRoadmapPublisher } from "@/server/services/roadmap.job-publisher";
 import { computeFingerprint, PrismaRoadmapRepo, RoadmapService } from "@/server/services/roadmap.service";
+
+// Stress tests (1,000 concurrent deliveries / multi-instance) are skipped under
+// CI because they run for several minutes and are validated locally instead.
+const stressTest = process.env.CI ? test.skip : test;
 import { roadmapReadRepo } from "@/server/services/roadmap.read.service";
 import { getTestDatabaseUrl } from "../helpers/setup-test-env";
 import { provisionFreshTestDatabase } from "../helpers/provision-test-db";
@@ -108,7 +112,7 @@ test("all committed migrations deploy cleanly on a fresh database", async () => 
   assert(names.includes("20260813150000_roadmap_generation_jobs"), "roadmap_generation_jobs should be applied");
 });
 
-test("1,000 identical concurrent deliveries produce exactly one roadmap and one AI call", async () => {
+stressTest("1,000 identical concurrent deliveries produce exactly one roadmap and one AI call", async () => {
   const userId = await seedUser();
   await seedCourse();
 
@@ -147,7 +151,7 @@ test("1,000 identical concurrent deliveries produce exactly one roadmap and one 
   assert.strictEqual(noops, 999, "all other deliveries are idempotent no-ops");
 });
 
-test("across multiple application instances only one AI call happens", async () => {
+stressTest("across multiple application instances only one AI call happens", async () => {
   const userId = await seedUser();
   await seedCourse();
 

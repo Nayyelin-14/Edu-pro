@@ -1,9 +1,11 @@
 /**
  * Provisions the throwaway test database (async).
  *
- * Recreates `elearning_test` from scratch and syncs the Prisma schema via
- * `prisma db push` (no migration history table required). Recreating the
- * schema on each invocation doubles as a fresh-database verification.
+ * Ensures the `elearning_test` database exists, then syncs its schema from
+ * `schema.prisma` with `prisma db push` (which avoids the `_prisma_migrations`
+ * history-table errors that `migrate deploy` hits on a recreated DB). The two
+ * Lesson CHECK constraints that live only in a migration are then re-applied
+ * idempotently. The database is reused across runs and kept in sync.
  */
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -48,26 +50,44 @@ async function provisionOnce(): Promise<void> {
     await main.end();
   }
 
-  const admin = new Client({ connectionString: getTestAdminUrl() });
-  await admin.connect();
-  try {
-    // Recreate the whole schema instead of dropping the database: dropping the
-    // DB fails on Neon while pooled backend connections still hold it open.
-    await admin.query("DROP SCHEMA IF EXISTS public CASCADE");
-    await admin.query("CREATE SCHEMA public");
-  } finally {
-    await admin.end();
-  }
-
   const prismaBin = join(process.cwd(), "node_modules", ".bin", "prisma");
-  // Use `db push` rather than `migrate deploy`: the throwaway test database is
-  // recreated from scratch each run, so there is no `_prisma_migrations`
-  // history table (which `migrate deploy` requires and would fail with P1014).
-  // `db push` syncs the schema from prisma/schema.prisma directly.
+  // Sync the schema from prisma/schema.prisma with `db push`. schema.prisma is
+  // the single source of truth for the test database, so it must stay in sync.
+  // `db push` does not rely on a `_prisma_migrations` history table, which keeps
+  // it robust against the P1014/P3005 errors `migrate deploy` hits on a
+  // recreated DB.
   execFileSync(prismaBin, ["db", "push", "--accept-data-loss"], {
     env: { ...process.env, DATABASE_URL: getTestAdminUrl() },
     stdio: "pipe",
   });
+
+  // The Lesson CHECK constraints that enforce single-content-source and
+  // type/content coherence live only in a migration (Prisma's @check attribute
+  // is unavailable in this Prisma version), so `db push` does not recreate
+  // them. Re-apply them idempotently so the test DB matches production
+  // behaviour.
+  const test = new Client({ connectionString: getTestAdminUrl() });
+  await test.connect();
+  try {
+    await test.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Lesson_single_content_source') THEN
+        ALTER TABLE "Lesson" ADD CONSTRAINT "Lesson_single_content_source" CHECK (
+          NOT ("videoUrl" IS NOT NULL AND "article" IS NOT NULL) AND
+          NOT ("videoUrl" IS NOT NULL AND "pdfUrl" IS NOT NULL) AND
+          NOT ("pdfUrl" IS NOT NULL AND "article" IS NOT NULL)
+        );
+      END IF;
+    END $$;`);
+    await test.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Lesson_type_content_coherence') THEN
+        ALTER TABLE "Lesson" ADD CONSTRAINT "Lesson_type_content_coherence" CHECK (
+          ("type" = 'READING') OR ("article" IS NULL AND "pdfUrl" IS NULL)
+        );
+      END IF;
+    END $$;`);
+  } finally {
+    await test.end();
+  }
 }
 
 // Allow `npx tsx tests/helpers/provision-test-db.ts` to run standalone in CI
