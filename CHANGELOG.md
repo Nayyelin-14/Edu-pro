@@ -1,1 +1,1 @@
-- ci: drop integration tests job from CI
+- build: generate Prisma client on install so Vercel builds succeed
