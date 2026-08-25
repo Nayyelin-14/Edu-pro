@@ -141,7 +141,7 @@ function LoginForm() {
   const landingFor = (u: PublicUser) =>
     u.role === "SUPERADMIN" || u.role === "INSTRUCTOR"
       ? "/staff/dashboard"
-      : `/${u.id}/dashboard`;
+      : "/";
 
   // When an existing (refreshable) session is detected on the login page —
   // e.g. the access JWT expired while the refresh token is still valid — send

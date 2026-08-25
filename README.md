@@ -10,8 +10,7 @@
 
 ## 🌐 Live Demo
 
-> **Deployment URL:** `https://your-deployment-url.com`
-> _(Replace this with your live link once deployed — e.g. Vercel, Render, or a VPS.)_
+**[→ edu-pro-nay1.vercel.app](https://edu-pro-nay1.vercel.app/)**
 
 A set of pre-created demo accounts is provided below so you can explore every role
 without signing up.

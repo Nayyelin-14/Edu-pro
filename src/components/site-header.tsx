@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/i18n";
 import { LanguageSwitcher } from "./language-switcher";
+import { ThemeToggle } from "./theme-toggle";
 
 export function SiteHeader() {
   const { user, logout, loading } = useAuth();
@@ -74,6 +75,7 @@ export function SiteHeader() {
           </button>
 
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <LanguageSwitcher />
           </div>
 
@@ -159,6 +161,7 @@ export function SiteHeader() {
               </Link>
             ))}
             <div className="mt-2 flex flex-wrap items-center gap-2">
+              <ThemeToggle />
               {user ? (
                 <>
                   {user.role === "SUPERADMIN" ? (
