@@ -1,0 +1,1 @@
+- fix(ci): provision test DB with db push + Lesson CHECK constraints; split integration job and skip stress tests
