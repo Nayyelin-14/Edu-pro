@@ -3,7 +3,13 @@ name: CI
 on:
   push:
     branches: [main, develop, staging]
+    # Don't burn CI minutes on documentation-only commits (README, CHANGELOG,
+    # etc.). A commit that changes a .md file alongside code still runs.
+    paths-ignore:
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
