@@ -7,9 +7,11 @@ on:
     # etc.). A commit that changes a .md file alongside code still runs.
     paths-ignore:
       - '**/*.md'
+      - 'screenshots/**'
   pull_request:
     paths-ignore:
       - '**/*.md'
+      - 'screenshots/**'
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:

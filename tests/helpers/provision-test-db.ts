@@ -1,9 +1,9 @@
 /**
  * Provisions the throwaway test database (async).
  *
- * Recreates `elearning_test` from scratch and applies every committed
- * migration via `prisma migrate deploy`. Recreating on each invocation
- * doubles as the "migration deployment on a fresh database" verification.
+ * Recreates `elearning_test` from scratch and syncs the Prisma schema via
+ * `prisma db push` (no migration history table required). Recreating the
+ * schema on each invocation doubles as a fresh-database verification.
  */
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -60,7 +60,11 @@ async function provisionOnce(): Promise<void> {
   }
 
   const prismaBin = join(process.cwd(), "node_modules", ".bin", "prisma");
-  execFileSync(prismaBin, ["migrate", "deploy"], {
+  // Use `db push` rather than `migrate deploy`: the throwaway test database is
+  // recreated from scratch each run, so there is no `_prisma_migrations`
+  // history table (which `migrate deploy` requires and would fail with P1014).
+  // `db push` syncs the schema from prisma/schema.prisma directly.
+  execFileSync(prismaBin, ["db", "push", "--accept-data-loss"], {
     env: { ...process.env, DATABASE_URL: getTestAdminUrl() },
     stdio: "pipe",
   });
