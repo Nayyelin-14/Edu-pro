@@ -1,1 +1,1 @@
-- build: generate Prisma client on install so Vercel builds succeed
+- feat: theme toggle in navbar, students land on home after login; add live URL to README
