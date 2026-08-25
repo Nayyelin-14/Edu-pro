@@ -51,6 +51,20 @@ async function provisionOnce(): Promise<void> {
   }
 
   const prismaBin = join(process.cwd(), "node_modules", ".bin", "prisma");
+  // Wipe any leftover data/schema from a previous run so each provisioning
+  // starts from a clean slate (this mirrors the old DROP SCHEMA behaviour).
+  // DROP SCHEMA only affects the schema inside elearning_test, so it does not
+  // hit Neon's "database accessed by other users" guard that blocks DROP
+  // DATABASE.
+  const testAdmin = new Client({ connectionString: getTestAdminUrl() });
+  await testAdmin.connect();
+  try {
+    await testAdmin.query("DROP SCHEMA public CASCADE");
+    await testAdmin.query("CREATE SCHEMA public");
+  } finally {
+    await testAdmin.end();
+  }
+
   // Sync the schema from prisma/schema.prisma with `db push`. schema.prisma is
   // the single source of truth for the test database, so it must stay in sync.
   // `db push` does not rely on a `_prisma_migrations` history table, which keeps
@@ -75,14 +89,14 @@ async function provisionOnce(): Promise<void> {
           NOT ("videoUrl" IS NOT NULL AND "article" IS NOT NULL) AND
           NOT ("videoUrl" IS NOT NULL AND "pdfUrl" IS NOT NULL) AND
           NOT ("pdfUrl" IS NOT NULL AND "article" IS NOT NULL)
-        );
+        ) NOT VALID;
       END IF;
     END $$;`);
     await test.query(`DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Lesson_type_content_coherence') THEN
         ALTER TABLE "Lesson" ADD CONSTRAINT "Lesson_type_content_coherence" CHECK (
           ("type" = 'READING') OR ("article" IS NULL AND "pdfUrl" IS NULL)
-        );
+        ) NOT VALID;
       END IF;
     END $$;`);
   } finally {
