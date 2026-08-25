@@ -10,6 +10,7 @@ import type { QuestionShape } from "@/types/content";
 import { LessonView } from "@/components/learning/lesson-view";
 import { CurriculumSidebar } from "@/components/learning/curriculum-sidebar";
 import { QuizRunner } from "@/components/learning/quiz-runner";
+import { LearningFlow, LearningProgress } from "@/components/learning/learning-flow";
 import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -30,14 +31,19 @@ export default async function LearningPage({
   const enrolled = await isEnrolled(user.id, courseId, ctx.tenant.id);
   if (!enrolled) redirect("/");
 
-  const { course, completedLessonIds } = await getCourseForLearning(ctx, courseId);
+  const { course, completedLessonIds, completedQuizIds } = await getCourseForLearning(
+    ctx,
+    courseId,
+  );
   const completedSet = new Set(completedLessonIds);
 
   const allLessons = course.modules.flatMap((m) => m.lessons);
   const totalLessons = allLessons.length;
-  const completedCount = completedLessonIds.length;
+  const totalQuizzes = course.modules.reduce((acc, m) => acc + m.quizzes.length, 0);
+  const totalItems = totalLessons + totalQuizzes;
+  const completedItems = completedLessonIds.length + completedQuizIds.length;
   const progressPercent =
-    totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0;
+    totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
 
   const selectedLessonId = sp.lesson ?? null;
   const selectedQuizId = sp.quiz ?? null;
@@ -92,9 +98,16 @@ export default async function LearningPage({
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-background">
-      {/* Top Navigation */}
-      <header className="h-16 flex-none z-30 bg-card">
+    <LearningFlow
+      key={courseId}
+      courseId={courseId}
+      courseSlug={course.slug}
+      myCoursesHref={`/${user.id}/my-courses`}
+      initialProgress={{ completedItems, totalItems, percent: progressPercent }}
+    >
+      <div className="h-full flex flex-col overflow-hidden bg-background">
+        {/* Top Navigation */}
+        <header className="h-16 flex-none z-30 bg-card">
         <div className="mx-auto flex h-full w-full  items-center justify-between gap-3 px-4 ">
           <div className="flex items-center gap-3 min-w-0">
             <Link
@@ -141,9 +154,14 @@ export default async function LearningPage({
                 </Link>
               </Button>
             )}
+            <LearningProgress variant="chip" />
           </div>
         </div>
       </header>
+
+      {/* Course-wide progress — always visible, updates the instant a lesson
+          or quiz is completed (driven by context, not server refresh). */}
+      <LearningProgress variant="bar" />
 
       {/* Main Layout */}
       <div className="flex-1 overflow-hidden">
@@ -161,9 +179,6 @@ export default async function LearningPage({
                     question,
                     options,
                   }))}
-                  onClose={() => {
-                    // Navigation handled by sidebar links
-                  }}
                 />
               </div>
             ) : selectedLesson ? (
@@ -199,7 +214,7 @@ export default async function LearningPage({
                     {course.title}
                   </h1>
                   <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-                    {completedCount} of {totalLessons} lessons completed.
+                    {completedItems} of {totalItems} lessons &amp; quizzes completed.
                     {progressPercent > 0 && (
                       <span className="text-primary ml-2">
                         ({progressPercent}%)
@@ -259,12 +274,17 @@ export default async function LearningPage({
             modules={course.modules}
             tests={course.tests}
             completedLessonIds={completedLessonIds}
+            completedQuizIds={completedQuizIds}
+            progressPercent={progressPercent}
+            completedItems={completedItems}
+            totalItems={totalItems}
             courseId={courseId}
             currentLessonId={selectedLessonId ?? undefined}
             currentQuizId={selectedQuizId ?? undefined}
           />
         </div>
       </div>
-    </div>
+      </div>
+    </LearningFlow>
   );
 }

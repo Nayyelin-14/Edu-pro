@@ -46,6 +46,11 @@ prisma/*.db
 
 # local test accounts
 TEST_ACCOUNTS.md
+STRIPE_WORKFLOW.md
+ACCOUNTS.md
+a.md 
+b.md
+MULTI_TENANCY_PHASES_E-O.md
 
 # portfolio screenshots
 screenshots/

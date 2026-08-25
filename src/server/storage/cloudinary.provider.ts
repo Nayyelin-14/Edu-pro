@@ -95,6 +95,7 @@ export class CloudinaryStorageProvider implements StorageProvider {
     kind: AssetKind,
     ttlSeconds: number,
   ) {
+    config(); // ensure SDK-wide config (api_key/secret) is applied
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
     const url = cloudinary.utils.private_download_url(
       publicId,
@@ -109,6 +110,7 @@ export class CloudinaryStorageProvider implements StorageProvider {
   }
 
   async deleteObject(publicId: string, kind: AssetKind): Promise<void> {
+    config(); // ensure SDK-wide config (api_key/secret) is applied
     try {
       const res = await cloudinary.uploader.destroy(publicId, {
         resource_type: resourceTypeFor(kind),

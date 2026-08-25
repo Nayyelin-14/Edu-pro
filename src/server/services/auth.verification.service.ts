@@ -44,6 +44,10 @@ export async function forgotPassword(email: string): Promise<void> {
   const resetUrl = `${appUrl()}/reset-password?token=${rawToken}`;
   // The reset token is already committed; a failed email must not surface as
   // an error (the user can request another link).
+  if (process.env.NODE_ENV !== "production") {
+    // Dev convenience: print the link so the flow is testable without SMTP.
+    console.log(`[dev] password reset link for ${user.email}: ${resetUrl}`);
+  }
   await bestEffort("email.password_reset", sendPasswordResetEmail(user.email, resetUrl));
 }
 

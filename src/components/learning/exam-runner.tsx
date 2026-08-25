@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
@@ -8,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, Flag, Timer, CheckCircle, XCircle, HelpCircle } from "lucide-react";
+import { CheckCircle, ChevronLeft, ChevronRight, Flag, HelpCircle, Timer } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface TestQuestion {
   id: string;
@@ -30,6 +32,7 @@ interface StartedTest {
 }
 
 interface TestResult {
+  id: string;
   score: number;
   total: number;
   percent: number;
@@ -66,8 +69,9 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
   const [running, setRunning] = useState<StartedTest | null>(null);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [markedForReview, setMarkedForReview] = useState<Set<string>>(new Set());
-  const [result, setResult] = useState<SubmitResponse | null>(null);
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
+  const router = useRouter();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
@@ -90,6 +94,37 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
     };
   }, [testId]);
 
+  // Submits the test and redirects to the certificate-request page, where the
+  // student can formally request a certificate (which notifies the instructor).
+  // Used by both the manual submit button and the auto-submit on timeout.
+  const finalizeSubmission = async (
+    answersSnapshot: Record<string, number>,
+    startedAt: string,
+  ) => {
+    if (!running) return;
+    setError("");
+    setLoading(true);
+    try {
+      const data = await apiFetch<SubmitResponse>(`/api/learning/test/${testId}/submit`, {
+        method: "POST",
+        body: JSON.stringify({
+          answers: running.test.questions.map((q) => ({
+            questionId: q.id,
+            selected: answersSnapshot[q.id] ?? -1,
+          })),
+          startedAt,
+        }),
+      });
+      setRunning(null);
+      router.push(
+        `/learning/${courseId}/certificate/request?testResultId=${data.result.id}&passed=${data.result.passed}&percent=${data.result.percent}&score=${data.result.score}&total=${data.result.total}`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!running) return;
@@ -99,27 +134,13 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
       setSecondsLeft(left);
       if (left === 0) {
         clearInterval(timer);
-        void (async () => {
-          try {
-            const data = await apiFetch<SubmitResponse>(`/api/learning/test/${testId}/submit`, {
-              method: "POST",
-              body: JSON.stringify({
-                answers: running.test.questions.map((q) => ({
-                  questionId: q.id,
-                  selected: answers[q.id] ?? -1,
-                })),
-                startedAt: running.startedAt,
-              }),
-            });
-            setResult(data);
-            setRunning(null);
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Auto-submit failed");
-          }
-        })();
+        void finalizeSubmission(answers, running.startedAt);
       }
     }, 1000);
     return () => clearInterval(timer);
+    // finalizeSubmission intentionally reads the latest `running`/`answers`
+    // captured here (both already in deps).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, testId, answers]);
 
   const start = async () => {
@@ -143,30 +164,12 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
 
   const submit = async () => {
     if (!running) return;
-    const unansweredCount = running.test.questions.filter((q) => answers[q.id] === undefined).length;
-    if (unansweredCount > 0) {
-      if (!confirm(`${unansweredCount} question(s) unanswered. Submit anyway?`)) return;
-    }
-    setError("");
-    setLoading(true);
-    try {
-      const data = await apiFetch<SubmitResponse>(`/api/learning/test/${testId}/submit`, {
-        method: "POST",
-        body: JSON.stringify({
-          answers: running.test.questions.map((q) => ({
-            questionId: q.id,
-            selected: answers[q.id] ?? -1,
-          })),
-          startedAt: running.startedAt,
-        }),
-      });
-      setResult(data);
-      setRunning(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setLoading(false);
-    }
+    await finalizeSubmission(answers, running.startedAt);
+  };
+
+  const requestSubmit = () => {
+    if (!running) return;
+    setSubmitConfirmOpen(true);
   };
 
   const goToQuestion = (index: number) => {
@@ -212,66 +215,10 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
     return `${mm}:${ss.toString().padStart(2, "0")}`;
   };
 
-  if (loading && !result) {
+  if (loading) {
     return (
       <div className="flex justify-center items-center min-h-[500px]">
         <Spinner className="size-8" />
-      </div>
-    );
-  }
-
-  if (result) {
-    const mm = Math.floor(result.result.timeTakenSeconds / 60);
-    const ss = result.result.timeTakenSeconds % 60;
-    return (
-      <div className="max-w-2xl mx-auto space-y-6">
-        <Card>
-          <CardContent className="space-y-6 p-8 text-center">
-            <div className={cn(
-              "w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4",
-              result.result.passed ? "bg-emerald-100 text-emerald-600" : "bg-red-100 text-red-600"
-            )}>
-              {result.result.passed ? (
-                <CheckCircle className="size-8" />
-              ) : (
-                <XCircle className="size-8" />
-              )}
-            </div>
-            <Alert variant={result.result.passed ? "success" : "error"} className="text-center">
-              {result.result.passed
-                ? "Congratulations — you passed the final test!"
-                : "You did not reach the passing score."}
-            </Alert>
-            <p className="text-4xl font-bold text-foreground">
-              {result.result.score} / {result.result.total} <span className="text-muted-foreground font-normal">({result.result.percent}%)</span>
-            </p>
-            <p className="text-muted-foreground">Time taken: {mm}m {ss}s</p>
-            {result.certificate && (
-              <div className="rounded-xl border border-emerald-600/40 bg-emerald-600/10 p-6">
-                <p className="font-medium text-emerald-700 flex items-center justify-center gap-2">
-                  <HelpCircle className="size-5" />
-                  A certificate has been issued to you.
-                </p>
-                <p className="mt-2 text-sm text-muted-foreground text-center">
-                  Number: <span className="font-mono font-medium">{result.certificate.number}</span>
-                </p>
-                {result.certificate.pdfUrl && (
-                  <Button asChild variant="outline" className="mt-4">
-                    <a href={result.certificate.pdfUrl} target="_blank" rel="noreferrer">
-                      Download certificate
-                    </a>
-                  </Button>
-                )}
-              </div>
-            )}
-            <div className="flex gap-3 justify-center pt-4">
-              <Button asChild variant="outline" size="lg">
-                <a href={`/learning/${courseId}`}>Back to course</a>
-              </Button>
-              <Button size="lg" onClick={() => setResult(null)}>Back to overview</Button>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     );
   }
@@ -283,8 +230,14 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
     const isLast = currentQuestionIndex === running.test.questions.length - 1;
     const answeredCount = running.test.questions.filter((q) => answers[q.id] !== undefined).length;
     const reviewCount = markedForReview.size;
+    const unansweredCount = running.test.questions.length - answeredCount;
+    const submitDescription =
+      unansweredCount > 0
+        ? `${unansweredCount} question(s) are still unanswered. You can submit anyway, but unanswered questions count as incorrect.`
+        : "Are you sure you want to submit your test? You won't be able to change your answers afterwards.";
 
     return (
+      <>
       <div className="h-[calc(100vh-4rem)] flex flex-col md:flex-row gap-6 overflow-hidden">
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 bg-card border border-border rounded-xl shadow-sm overflow-hidden">
@@ -438,7 +391,7 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
               {markedForReview.has(currentQuestion.id) ? "Unmark Review" : "Mark for Review"}
             </Button>
             <Button
-              onClick={submit}
+              onClick={requestSubmit}
               disabled={loading}
               className="w-full justify-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
               size="lg"
@@ -458,6 +411,21 @@ export function ExamRunner({ testId, courseId }: ExamRunnerProps) {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={submitConfirmOpen}
+        title="Submit test?"
+        description={submitDescription}
+        confirmLabel="Submit test"
+        cancelLabel="Keep reviewing"
+        loading={loading}
+        onConfirm={() => {
+          setSubmitConfirmOpen(false);
+          void submit();
+        }}
+        onCancel={() => setSubmitConfirmOpen(false)}
+      />
+      </>
     );
   }
 

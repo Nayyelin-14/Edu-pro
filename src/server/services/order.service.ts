@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 import { bestEffort } from "@/lib/async";
 import { sendPurchaseReceiptEmail } from "@/lib/email";
-import { createEnrollment, enrollInTransaction } from "./enrollment.service";
+import { createEnrollment } from "./enrollment.service";
 import { notify } from "./notification.service";
 import type { TenantContext } from "@/server/tenant-context";
 
@@ -11,73 +11,100 @@ function appUrl(): string {
   return process.env.APP_URL || "http://localhost:3000";
 }
 
-/** Minimal payment-session shape shared by the checkout, confirm and webhook paths. */
-type StripePaymentSession = {
-  payment_intent?: string | null | { id: string };
+/** Rejects if `promise` does not settle within `ms`, so a slow upstream
+ *  (e.g. Stripe) can never hang an interactive request. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+type Orderish = {
+  id: string;
+  userId: string;
+  courseId: string;
+  amountPaid: number;
+  currency: string;
+  stripeSessionId: string | null;
 };
 
 /**
- * Returns true when the user already has a paid (or free) enrollment.
- * `tenantId` MUST come from a trusted TenantContext or the resource itself.
+ * Verifies the Stripe session is actually paid for the expected amount/currency
+ * and transitions the order PENDING -> PAID exactly once (optimistic lock).
+ * Idempotent: concurrent callers converge on one PAID order + one enrollment.
  */
-export async function hasAccess(userId: string, courseId: string, tenantId: string) {
-  const enrolled = await prisma.enrollment.findFirst({
-    where: { userId, courseId, tenantId },
-    select: { id: true },
-  });
-  if (enrolled) return true;
-  const paid = await prisma.order.findFirst({
-    where: { userId, courseId, status: "PAID" },
-    select: { id: true },
-  });
-  return paid !== null;
-}
+async function completePaidOrder(order: Orderish): Promise<{ created: boolean }> {
+  if (!order.stripeSessionId) throw new Error(`Order ${order.id} has no Stripe session`);
 
-export async function getPaidOrder(userId: string, courseId: string) {
-  return prisma.order.findFirst({
-    where: { userId, courseId, status: "PAID" },
-    orderBy: { createdAt: "desc" },
+  const stripe = getStripe();
+  const retrieved = await stripe.checkout.sessions.retrieve(order.stripeSessionId, {
+    expand: ["payment_intent"],
   });
-}
 
-/**
- * Marks an order paid and grants the enrollment in a single transaction.
- * Idempotent and concurrency-safe: concurrent confirm/webhook calls converge
- * on one PAID order and one enrollment (the unique constraints absorb the
- * duplicates). Shared by the confirm route, the Stripe webhook and checkout
- * reconciliation.
- */
-async function completePaidOrder(
-  order: { id: string; userId: string; courseId: string },
-  session: StripePaymentSession,
-): Promise<void> {
-  const paymentIntentId =
-    typeof session.payment_intent === "object" && session.payment_intent
-      ? session.payment_intent.id
-      : session.payment_intent ?? undefined;
-  // The enrollment's tenant derives AUTHORITATIVELY from the course row —
-  // never from request input. Orders are global; enrollments are tenant-owned.
+  // Never fulfil an unpaid session (covers async payment methods).
+  if (retrieved.payment_status !== "paid") {
+    throw new Error(
+      `Refusing to complete order ${order.id}: payment_status=${retrieved.payment_status}`,
+    );
+  }
+
+  // Defense-in-depth: confirm the amount/currency Stripe actually captured
+  // matches what we recorded. Catches misconfig / tampering.
+  const pi = retrieved.payment_intent as
+    | { id?: string; amount?: number; currency?: string }
+    | string
+    | null;
+  const piObj =
+    pi && typeof pi === "object"
+      ? pi
+      : null;
+  if (piObj) {
+    if (typeof piObj.amount === "number" && piObj.amount !== order.amountPaid * 100) {
+      throw new Error(
+        `Order ${order.id} amount mismatch: PaymentIntent ${piObj.amount} vs expected ${order.amountPaid * 100}`,
+      );
+    }
+    if (
+      piObj.currency &&
+      piObj.currency.toLowerCase() !== order.currency.toLowerCase()
+    ) {
+      throw new Error(
+        `Order ${order.id} currency mismatch: ${piObj.currency} vs ${order.currency}`,
+      );
+    }
+  }
+
   const course = await prisma.course.findUnique({
     where: { id: order.courseId },
     select: { tenantId: true },
   });
   if (!course) throw notFound("Course not found");
-  const { created } = await prisma.$transaction(
-    async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: {
-          status: "PAID",
-          completedAt: new Date(),
-          stripePaymentIntentId: paymentIntentId,
-        },
-      });
-      return enrollInTransaction(tx, order.userId, order.courseId, course.tenantId);
+
+  // Optimistic lock: only the first writer wins; the rest short-circuit.
+  const locked = await prisma.order.updateMany({
+    where: { id: order.id, status: "PENDING" },
+    data: {
+      status: "PAID",
+      completedAt: new Date(),
+      stripePaymentIntentId:
+        typeof pi === "string" ? pi : piObj?.id ?? order.stripeSessionId,
     },
-    { maxWait: 20_000, timeout: 30_000 },
-  );
-  // Notify only for a brand-new enrollment (replayed webhooks must stay silent).
+  });
+  if (locked.count === 0) return { created: false };
+
+  const { created } = await createEnrollment(order.userId, order.courseId, course.tenantId);
   if (created) await afterEnrollment(order.userId, order.courseId);
+  return { created };
 }
 
 /**
@@ -89,7 +116,6 @@ export async function startCheckout(
   courseId: string,
 ): Promise<{ checkoutUrl: string | null; alreadyEnrolled: boolean }> {
   const userId = ctx.user.id;
-  // Tenant-scoped course lookup: cross-tenant ids resolve as "not found".
   const course = await prisma.course.findFirst({
     where: { id: courseId, tenantId: ctx.tenant.id },
     select: { id: true, slug: true, title: true, price: true, isPublished: true },
@@ -103,61 +129,113 @@ export async function startCheckout(
   if (enrolled) return { checkoutUrl: null, alreadyEnrolled: true };
 
   if (course.price <= 0) {
-    // Free course — no payment needed; enroll directly.
     const { created } = await createEnrollment(userId, courseId, ctx.tenant.id);
     return { checkoutUrl: null, alreadyEnrolled: !created };
   }
 
-  // Reuse an existing pending checkout session so refreshing the page doesn't
-  // create a pile of Stripe sessions.
+  // Reuse an existing in-flight checkout session so a page refresh / retry does
+  // not pile up Stripe sessions or PENDING orders.
   const existing = await prisma.order.findFirst({
     where: { userId, courseId, status: "PENDING", stripeSessionId: { not: null } },
-    select: { id: true, userId: true, courseId: true, stripeSessionId: true },
+    select: {
+      id: true,
+      userId: true,
+      courseId: true,
+      stripeSessionId: true,
+      amountPaid: true,
+      currency: true,
+    },
     orderBy: { createdAt: "desc" },
   });
 
   if (existing?.stripeSessionId) {
-    const stripe = getStripe();
-    const session = await stripe.checkout.sessions.retrieve(existing.stripeSessionId);
-    // The user may have paid in an earlier attempt whose webhook/confirm was
-    // missed. Complete the purchase instead of bouncing them back to Stripe.
-    if (session.payment_status === "paid") {
-      await completePaidOrder(existing, session);
+    const session = await getStripe().checkout.sessions.retrieve(existing.stripeSessionId);
+    // A missed webhook may have already paid this session — finish it here.
+    if (session.payment_status === "paid" || session.status === "complete") {
+      await completePaidOrder(existing);
       return { checkoutUrl: null, alreadyEnrolled: true };
     }
-    return { checkoutUrl: session.url ?? null, alreadyEnrolled: false };
+    // A live, open session can be resumed directly.
+    if (session.status === "open") {
+      return { checkoutUrl: session.url ?? null, alreadyEnrolled: false };
+    }
+    // Expired/unusable -> fall through and create a fresh session.
   }
 
-  const stripe = getStripe();
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-    line_items: [
-      {
-        price_data: {
-          currency: "thb",
-          product_data: { name: course.title },
-          unit_amount: course.price,
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+
+  const session = await getStripe().checkout.sessions.create(
+    {
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "thb",
+            product_data: { name: course.title },
+            unit_amount: course.price * 100,
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      },
-    ],
-    customer_email: (
-      await prisma.user.findUnique({ where: { id: userId }, select: { email: true } })
-    )?.email,
-    success_url: `${appUrl()}/courses/${course.slug}?payment=success`,
-    cancel_url: `${appUrl()}/courses/${course.slug}`,
-    metadata: { courseId: course.id, userId },
-  });
-  await prisma.order.create({
-    data: {
-      userId,
-      courseId,
-      amountPaid: course.price,
-      currency: "THB",
-      status: "PENDING",
-      stripeSessionId: session.id,
+      ],
+      customer_email: user?.email,
+      success_url: `${appUrl()}/courses/${course.slug}?payment=success`,
+      cancel_url: `${appUrl()}/courses/${course.slug}`,
+      metadata: { courseId: course.id, userId },
     },
-  });
+    // Idempotency: retries of the same intent reuse the original session.
+    { idempotencyKey: `co_${userId}_${courseId}` },
+  );
+
+  const order = await prisma.order
+    .create({
+      data: {
+        userId,
+        courseId,
+        amountPaid: course.price,
+        currency: "THB",
+        status: "PENDING",
+        stripeSessionId: session.id,
+      },
+    })
+    .catch(async (err) => {
+      // A concurrent insert may have won the (userId, courseId, PENDING) unique.
+      if (err?.code === "P2002") {
+        const won = await prisma.order.findFirst({
+          where: { userId, courseId, status: "PENDING", stripeSessionId: { not: null } },
+          select: {
+            id: true,
+            userId: true,
+            courseId: true,
+            stripeSessionId: true,
+            amountPaid: true,
+            currency: true,
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (won?.stripeSessionId) {
+          const s = await getStripe().checkout.sessions.retrieve(won.stripeSessionId);
+          if (s.status === "open") return null; // caller treats null as "reuse existing"
+        }
+      }
+      throw err;
+    });
+
+  // Another request created the order first; reuse its session.
+  if (!order) {
+    const won = await prisma.order.findFirst({
+      where: { userId, courseId, status: "PENDING", stripeSessionId: { not: null } },
+      select: { stripeSessionId: true },
+      orderBy: { createdAt: "desc" },
+    });
+    if (won?.stripeSessionId) {
+      const s = await getStripe().checkout.sessions.retrieve(won.stripeSessionId);
+      return { checkoutUrl: s.url ?? null, alreadyEnrolled: false };
+    }
+  }
+
   return { checkoutUrl: session.url ?? null, alreadyEnrolled: false };
 }
 
@@ -184,6 +262,15 @@ export async function confirmOrder(
   const order = await prisma.order.findFirst({
     where: { userId, courseId, status: { in: ["PENDING", "PAID"] } },
     orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      userId: true,
+      courseId: true,
+      status: true,
+      amountPaid: true,
+      currency: true,
+      stripeSessionId: true,
+    },
   });
   if (!order || !order.stripeSessionId) {
     throw badRequest("No pending purchase found");
@@ -194,15 +281,19 @@ export async function confirmOrder(
     return { confirmed: true, enrolled: true, paid: true };
   }
 
-  // Ask Stripe for the authoritative status.
-  const stripe = getStripe();
-  const session = await stripe.checkout.sessions.retrieve(order.stripeSessionId, {
-    expand: ["payment_intent"],
-  });
+  // Ask Stripe for the authoritative status (bounded so a slow upstream
+  // can never hang this interactive request).
+  const session = await withTimeout(
+    getStripe().checkout.sessions.retrieve(order.stripeSessionId, {
+      expand: ["payment_intent"],
+    }),
+    10_000,
+    "stripe.session.retrieve",
+  );
   if (session.payment_status !== "paid") {
     return { confirmed: false, enrolled: false, paid: false };
   }
-  await completePaidOrder(order, session);
+  await completePaidOrder(order);
   return { confirmed: true, enrolled: true, paid: true };
 }
 
@@ -261,9 +352,115 @@ export async function completeOrderFromStripe(session: {
 }) {
   const order = await prisma.order.findUnique({
     where: { stripeSessionId: session.id },
-    select: { id: true, userId: true, courseId: true, status: true },
+    select: {
+      id: true,
+      userId: true,
+      courseId: true,
+      status: true,
+      amountPaid: true,
+      currency: true,
+      stripeSessionId: true,
+    },
   });
-  if (!order || order.status === "PAID") return { alreadyProcessed: true };
-  await completePaidOrder(order, session);
+  if (!order) return { alreadyProcessed: false, reason: "no_order" };
+  // Terminal states: do not re-process refunds/disputes or already-paid orders.
+  if (order.status === "PAID" || order.status === "REFUNDED" || order.status === "DISPUTED") {
+    return { alreadyProcessed: true };
+  }
+  await completePaidOrder({
+    id: order.id,
+    userId: order.userId,
+    courseId: order.courseId,
+    amountPaid: order.amountPaid,
+    currency: order.currency,
+    stripeSessionId: order.stripeSessionId!,
+  });
   return { alreadyProcessed: false };
+}
+
+/** Marks an order refunded (via Stripe `charge.refunded`). */
+export async function markOrderRefunded(paymentIntentId: string) {
+  const order = await prisma.order.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
+  if (!order) return;
+  if (order.status === "REFUNDED") return;
+  await prisma.order.update({ where: { id: order.id }, data: { status: "REFUNDED" } });
+  await bestEffort(
+    "notification.refunded",
+    notify({
+      userId: order.userId,
+      type: "COURSE_ENROLLED",
+      title: "Your purchase was refunded",
+      body: "A refund has been issued for one of your courses.",
+      link: `/learning/${order.courseId}`,
+      courseId: order.courseId,
+    }),
+  );
+}
+
+/** Marks an order as disputed (via Stripe `charge.dispute.created`). */
+export async function markOrderDisputed(paymentIntentId: string) {
+  const order = await prisma.order.findFirst({ where: { stripePaymentIntentId: paymentIntentId } });
+  if (!order) return;
+  if (order.status === "DISPUTED") return;
+  await prisma.order.update({ where: { id: order.id }, data: { status: "DISPUTED" } });
+}
+
+/**
+ * Reconciliation safety net: catches PENDING orders whose Stripe session is
+ * actually paid (webhook missed + user never returned) and expires dead ones.
+ * Wire this to a cron (e.g. every 10 minutes).
+ */
+export async function reconcilePendingOrders(): Promise<{ completed: number; expired: number }> {
+  const pending = await prisma.order.findMany({
+    where: { status: "PENDING", stripeSessionId: { not: null } },
+    select: {
+      id: true,
+      userId: true,
+      courseId: true,
+      amountPaid: true,
+      currency: true,
+      stripeSessionId: true,
+    },
+  });
+  let completed = 0;
+  let expired = 0;
+  for (const o of pending) {
+    try {
+      const s = await getStripe().checkout.sessions.retrieve(o.stripeSessionId!);
+      if (s.payment_status === "paid" || s.status === "complete") {
+        await completePaidOrder(o);
+        completed += 1;
+      } else if (s.status === "expired") {
+        await prisma.order.update({ where: { id: o.id }, data: { status: "EXPIRED" } });
+        expired += 1;
+      }
+    } catch (e) {
+      console.error(`[reconcile] order ${o.id} failed:`, e);
+    }
+  }
+  return { completed, expired };
+}
+
+/**
+ * Returns true when the user already has a paid (or free) enrollment.
+ * `tenantId` MUST come from a trusted TenantContext or the resource itself.
+ */
+export async function hasAccess(userId: string, courseId: string, tenantId: string) {
+  const enrolled = await prisma.enrollment.findFirst({
+    where: { userId, courseId, tenantId },
+    select: { id: true },
+  });
+  if (enrolled) return true;
+  const paid = await prisma.order.findFirst({
+    where: { userId, courseId, status: "PAID" },
+    select: { id: true },
+  });
+  return paid !== null;
+}
+
+export async function getPaidOrder(userId: string, courseId: string) {
+  return prisma.order.findFirst({
+    where: { userId, courseId, status: "PAID" },
+    orderBy: { createdAt: "desc" },
+  });
 }

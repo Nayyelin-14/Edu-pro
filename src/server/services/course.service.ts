@@ -130,41 +130,50 @@ export async function getCoursePage(
 
 export async function getCourseForLearning(ctx: TenantContext, courseId: string) {
   const userId = ctx.user.id;
-  const [course, completedRows] = await Promise.all([
-    // Tenant-scoped lookup: cross-tenant course ids resolve as "not found".
-    prisma.course.findFirst({
-      where: { id: courseId, tenantId: ctx.tenant.id },
-      include: {
-        modules: {
-          orderBy: { position: "asc" },
-          include: {
-            lessons: { orderBy: { position: "asc" } },
-            quizzes: { select: { id: true, title: true, questions: true } },
-          },
-        },
-        tests: {
-          where: { isEnabled: true },
-          select: {
-            id: true,
-            title: true,
-            description: true,
-            passingScore: true,
-            timeLimitMinutes: true,
-            attemptLimit: true,
-            questions: true,
-          },
+  const course = await prisma.course.findFirst({
+    where: { id: courseId, tenantId: ctx.tenant.id },
+    include: {
+      modules: {
+        orderBy: { position: "asc" },
+        include: {
+          lessons: { orderBy: { position: "asc" } },
+          quizzes: { select: { id: true, title: true, questions: true } },
         },
       },
-    }),
+      tests: {
+        where: { isEnabled: true },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          passingScore: true,
+          timeLimitMinutes: true,
+          attemptLimit: true,
+          questions: true,
+        },
+      },
+    },
+  });
+  if (!course) throw notFound("Course not found");
+
+  const quizIds = course.modules.flatMap((m) => m.quizzes.map((q) => q.id));
+  const [completedLessonRows, completedQuizRows] = await Promise.all([
     prisma.completedLesson.findMany({
-      where: { userId, tenantId: ctx.tenant.id },
+      where: { userId, lesson: { module: { courseId } } },
       select: { lessonId: true },
     }),
+    quizIds.length > 0
+      ? prisma.quizResult.findMany({
+          where: { userId, quizId: { in: quizIds }, passed: true, tenantId: ctx.tenant.id },
+          select: { quizId: true },
+        })
+      : Promise.resolve([]),
   ]);
-  if (!course) throw notFound("Course not found");
+
   return {
     course,
-    completedLessonIds: completedRows.map((c) => c.lessonId),
+    completedLessonIds: completedLessonRows.map((c) => c.lessonId),
+    completedQuizIds: completedQuizRows.map((q) => q.quizId),
   };
 }
 

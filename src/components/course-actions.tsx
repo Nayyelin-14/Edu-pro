@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -56,7 +56,6 @@ export function CourseActions({
   initialSaved?: boolean;
 }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { user, loading } = useAuth();
   const { toast } = useToast();
   const [saved, setSaved] = useState(initialSaved);
@@ -67,33 +66,6 @@ export function CourseActions({
   // The server already knows the auth state (initialSignedIn), so we use that
   // while useAuth() is still resolving to avoid flashing "Sign in to enroll".
   const signedIn = loading ? initialSignedIn : Boolean(user);
-
-  // Returning from a successful Stripe checkout: confirm the payment and
-  // enroll (the webhook may not have arrived yet).
-  useEffect(() => {
-    if (!user || searchParams.get("payment") !== "success") return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        await apiFetch(`/api/courses/${courseId}/checkout/confirm`, {
-          method: "POST",
-        });
-        if (!cancelled) {
-          setEnrolled(true);
-          toast("Enrolled!", "success");
-          router.replace(`/courses/${slug}`);
-          router.refresh();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          toast(err instanceof Error ? err.message : "Payment not confirmed", "error");
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user, courseId, slug, searchParams, router, toast]);
 
   useEffect(() => {
     if (!user) return;
@@ -134,20 +106,9 @@ export function CourseActions({
         router.push(`/learning/${courseId}`);
         return;
       }
-      // Paid course: create/resume the Stripe Checkout session and redirect.
-      const res = await apiFetch<{ checkoutUrl: string | null; alreadyEnrolled: boolean }>(
-        `/api/courses/${courseId}/checkout`,
-        { method: "POST" },
-      );
-      if (res.alreadyEnrolled) {
-        setEnrolled(true);
-        router.refresh();
-        router.push(`/learning/${courseId}`);
-        return;
-      }
-      if (res.checkoutUrl) {
-        window.location.href = res.checkoutUrl;
-      }
+      // Paid course: go to the in-app checkout page (shows course summary +
+      // starts the Stripe session there).
+      router.push(`/checkout/${courseId}`);
     } catch (err) {
       toast(err instanceof Error ? err.message : "Something went wrong", "error");
     } finally {

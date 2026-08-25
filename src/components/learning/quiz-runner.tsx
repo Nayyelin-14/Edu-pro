@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { apiFetch } from "@/lib/api-client";
-import { cn } from "@/lib/utils";
+import { useLearningFlow } from "@/components/learning/learning-flow";
+import { QuizStep } from "@/components/learning/quiz-step";
 
 export interface QuizQuestion {
   id: string;
@@ -30,10 +32,24 @@ export function QuizRunner({
   quizId: string;
   title: string;
   questions: QuizQuestion[];
-  onClose: () => void;
+  onClose?: () => void;
 }) {
   const { toast } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const flow = useLearningFlow();
+  // Default close behaviour: drop the ?quiz= param so the lesson view returns.
+  const handleClose =
+    onClose ??
+    (() => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("quiz");
+      const qs = params.toString();
+      router.push(qs ? `${pathname}?${qs}` : pathname);
+    });
   const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [current, setCurrent] = useState(0);
   const [result, setResult] = useState<QuizResult | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -59,6 +75,10 @@ export function QuizRunner({
         },
       );
       setResult(data);
+      if (data.passed) {
+        router.refresh();
+        flow.notifyCompleted({ id: quizId, type: "quiz" });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -82,48 +102,27 @@ export function QuizRunner({
               {result.score} / {result.total}
             </p>
             <div className="flex gap-2">
-              <Button onClick={() => { setResult(null); setAnswers({}); }}>
+              <Button onClick={() => { setResult(null); setAnswers({}); setCurrent(0); }}>
                 Retry
               </Button>
-              <Button variant="outline" onClick={onClose}>
+              <Button variant="outline" onClick={handleClose}>
                 Close
               </Button>
             </div>
           </div>
         ) : (
-          <>
-            {questions.map((q, qi) => (
-              <div key={q.id} className="space-y-2">
-                <p className="font-medium">
-                  {qi + 1}. {q.question}
-                </p>
-                <div className="grid gap-2">
-                  {q.options.map((option, oi) => (
-                    <button
-                      key={oi}
-                      type="button"
-                      onClick={() => setAnswers((a) => ({ ...a, [q.id]: oi }))}
-                      className={cn(
-                        "rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent",
-                        answers[q.id] === oi && "border-primary bg-primary/10",
-                      )}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-            {error && <Alert variant="error">{error}</Alert>}
-            <div className="flex gap-2">
-              <Button onClick={() => void submit()} disabled={loading}>
-                {loading ? "Submitting…" : "Submit answers"}
-              </Button>
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-            </div>
-          </>
+          <QuizStep
+            questions={questions}
+            current={current}
+            answers={answers}
+            error={error}
+            loading={loading}
+            submitLabel="Submit Quiz"
+            onSelect={(qid, oi) => setAnswers((a) => ({ ...a, [qid]: oi }))}
+            onPrev={() => setCurrent((c) => Math.max(0, c - 1))}
+            onNext={() => setCurrent((c) => Math.min(questions.length - 1, c + 1))}
+            onSubmit={() => void submit()}
+          />
         )}
       </CardContent>
     </Card>

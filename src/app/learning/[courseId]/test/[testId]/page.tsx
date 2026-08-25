@@ -1,6 +1,9 @@
 import { redirect } from "next/navigation";
+import { Lock } from "lucide-react";
 import { ExamRunner } from "@/components/learning/exam-runner";
 import { isEnrolled } from "@/server/services/enrollment.service";
+import { getItemProgress } from "@/server/services/learning.service";
+import { MIN_COURSE_COMPLETION_PERCENT } from "@/server/services/test.service";
 import { resolveTenantContext } from "@/server/tenant-context";
 import { requireUserRedirect } from "@/server/guards";
 import { prisma } from "@/lib/prisma";
@@ -27,6 +30,10 @@ export default async function TestPage({ params }: PageProps) {
   });
   if (!test || test.courseId !== courseId) redirect("/");
 
+  // Final exam is only available after most of the course is finished.
+  const completion = await getItemProgress(ctx, courseId);
+  const locked = completion.percent < MIN_COURSE_COMPLETION_PERCENT;
+
   return (
     <div className="h-full w-full bg-background">
       {/* Top header with timer */}
@@ -44,14 +51,36 @@ export default async function TestPage({ params }: PageProps) {
           <div className="h-8 w-px bg-border mx-2" />
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-0.5">
-              Exam in Progress
+              Final Exam
             </p>
           </div>
         </div>
       </header>
 
       <main className="flex-1 p-4 md:p-6 overflow-auto">
-        <ExamRunner testId={testId} courseId={courseId} />
+        {locked ? (
+          <div className="mx-auto mt-16 flex max-w-md flex-col items-center gap-4 rounded-3xl border border-border bg-card p-10 text-center shadow-sm">
+            <span className="flex size-16 items-center justify-center rounded-full bg-amber-500/10 ring-4 ring-amber-500/15">
+              <Lock className="size-8 text-amber-500" />
+            </span>
+            <h2 className="text-xl font-bold text-foreground">Final exam locked</h2>
+            <p className="text-sm text-muted-foreground">
+              You need to finish at least {MIN_COURSE_COMPLETION_PERCENT}% of the
+              course (lessons &amp; quizzes) before taking the final exam.
+              You&apos;re currently at{" "}
+              <span className="font-semibold text-foreground">{completion.percent}%</span>{" "}
+              ({completion.completedItems}/{completion.totalItems} items).
+            </p>
+            <a
+              href={`/learning/${courseId}`}
+              className="mt-2 inline-flex items-center justify-center rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Back to course content
+            </a>
+          </div>
+        ) : (
+          <ExamRunner testId={testId} courseId={courseId} />
+        )}
       </main>
     </div>
   );

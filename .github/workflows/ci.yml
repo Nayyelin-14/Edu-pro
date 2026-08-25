@@ -2,14 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, staging]
   pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     name: Lint, typecheck and tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -50,12 +55,17 @@ jobs:
 
   build:
     name: Production build
+    needs: [check]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      JWT_ACCESS_SECRET: ${{ secrets.JWT_ACCESS_SECRET }}
+      JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+      APP_URL: ${{ secrets.APP_URL }}
+      DEFAULT_TENANT_SLUG: ${{ secrets.DEFAULT_TENANT_SLUG }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,8 +84,61 @@ jobs:
       - name: Build
         run: npm run build
 
-      # The build must not depend on infrastructure that CI does not have.
-      - name: Fail when required build-time secrets are missing
+      # The build must not depend on infrastructure CI does not have. 2FA
+      # encryption is optional at runtime (it fails closed), so this is a
+      # warning, not a hard failure.
+      - name: Warn when ENCRYPTION_KEY is missing
         if: env.ENCRYPTION_KEY == ''
         run: |
           echo "::warning::ENCRYPTION_KEY is not set. The build succeeds without it, but 2FA secret encryption will fail closed at runtime. Set the secret for production."
+
+  changelog:
+    name: Compose changelog (changelog-composer)
+    needs: [build]
+    # Only on pushes (never PRs/forks). The composer is optional: the step
+    # below no-ops cleanly when CHANGELOG_API_KEY / CHANGELOG_SERVICE_URL are
+    # not set. The job is best-effort — a composer outage does not block a
+    # deploy, it just logs and exits cleanly.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    env:
+      CHANGELOG_SERVICE_URL: ${{ secrets.CHANGELOG_SERVICE_URL }}
+      CHANGELOG_API_KEY: ${{ secrets.CHANGELOG_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Call changelog-composer and commit the draft
+        run: |
+          set -euo pipefail
+          if [ -z "$CHANGELOG_API_KEY" ] || [ -z "$CHANGELOG_SERVICE_URL" ]; then
+            echo "changelog-composer not configured (CHANGELOG_SERVICE_URL / CHANGELOG_API_KEY missing); skipping."
+            exit 0
+          fi
+          resp=$(curl -fsS -X POST "$CHANGELOG_SERVICE_URL/api/github/pipeline/generate" \
+            -H "Authorization: Bearer $CHANGELOG_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"runId\": \"${{ github.run_id }}\", \"project\": \"${{ github.repository_owner }}\", \"repo\": \"${{ github.event.repository.name }}\", \"branch\": \"${{ github.ref_name }}\"}") || {
+            echo "::warning::changelog-composer call failed (service unreachable or bad key) — skipping."
+            exit 0
+          }
+          echo "$resp"
+          changelog=$(echo "$resp" | jq -r '.changelog // empty')
+          if [ -z "$changelog" ]; then
+            echo "changelog-composer returned no changelog for this run; nothing to commit."
+            exit 0
+          fi
+          printf '%s\n' "$changelog" > CHANGELOG.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG.md change."
+            exit 0
+          fi
+          git commit -m "chore: update CHANGELOG.md via changelog-composer [skip ci]"
+          git push

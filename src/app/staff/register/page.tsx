@@ -11,6 +11,7 @@ import {
   Field,
   adminInputClass,
 } from "@/components/admin/admin-ui";
+import { PasswordInput } from "@/components/ui/password-input";
 
 export default function AdminRegisterPage() {
   const { toast } = useToast();
@@ -120,20 +121,19 @@ export default function AdminRegisterPage() {
             </Field>
             <Mail className="pointer-events-none absolute left-3 top-9 size-4 text-muted-foreground" />
           </div>
-          <div className="relative">
-            <Field label="Password">
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-                className={`${adminInputClass} pl-10`}
-              />
-            </Field>
-            <Lock className="pointer-events-none absolute left-3 top-9 size-4 text-muted-foreground" />
-          </div>
+            <div className="relative">
+              <Field label="Password">
+                <PasswordInput
+                  id="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  className={`${adminInputClass} pl-10`}
+                />
+              </Field>
+              <Lock className="pointer-events-none absolute left-3 top-9 size-4 text-muted-foreground" />
+            </div>
 
           {error && <Alert variant="error">{error}</Alert>}
 

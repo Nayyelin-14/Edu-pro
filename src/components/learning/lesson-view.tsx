@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -25,6 +25,7 @@ import { Spinner } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { apiFetch } from "@/lib/api-client";
 import { cn, formatClockTime } from "@/lib/utils";
+import { useLearningFlow } from "@/components/learning/learning-flow";
 
 interface Comment {
   id: string;
@@ -75,9 +76,14 @@ export function LessonView({
   allLessons,
 }: LessonViewProps) {
   const router = useRouter();
+  const flow = useLearningFlow();
   const qc = useQueryClient();
   const { toast } = useToast();
   const [completed, setCompleted] = useState(initiallyCompleted);
+  const completedRef = useRef(initiallyCompleted);
+  useEffect(() => {
+    completedRef.current = completed;
+  }, [completed]);
   const [toggling, setToggling] = useState(false);
   const [tab, setTab] = useState<"notes" | "comments">("notes");
   const [notes, setNotes] = useState("");
@@ -94,7 +100,35 @@ export function LessonView({
     volume: 1,
     muted: false,
     fullscreen: false,
+    buffering: false,
   });
+
+  // Always-current snapshot of videoState so the (re)mount sync handler can
+  // re-apply the user's last mute/volume preference without a stale closure.
+  const videoStateRef = useRef(videoState);
+  useEffect(() => {
+    videoStateRef.current = videoState;
+  }, [videoState]);
+
+  // Controls auto-hide: visible on hover/move inside the player, hidden once
+  // the cursor truly leaves the player boundary (and after a short period of
+  // inactivity while playing). A single timer drives the inactivity hide.
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    hideControlsTimer.current = setTimeout(() => {
+      // Only auto-hide while actually playing; a paused video keeps controls.
+      if (videoRef.current && !videoRef.current.paused) {
+        setControlsVisible(false);
+      }
+    }, 3000);
+  }, []);
+  const hideControls = useCallback(() => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    setControlsVisible(false);
+  }, []);
 
   const commentsQuery = useQuery({
     queryKey: ["comments", lesson.id],
@@ -124,6 +158,9 @@ export function LessonView({
       );
       setCompleted(data.completed);
       router.refresh();
+      if (data.completed) {
+        flow.notifyCompleted({ id: lesson.id, type: "lesson" });
+      }
     } catch (err) {
       toast(
         err instanceof Error ? err.message : "Something went wrong",
@@ -222,33 +259,70 @@ export function LessonView({
   const nextLesson =
     currentIdx < allLessons.length - 1 ? allLessons[currentIdx + 1] : null;
 
-  const video = videoRef.current;
-
-  // Video state sync effect
+  // Video state sync effect. Re-attaches whenever the media URL changes,
+  // because the <video> element does NOT exist on the first render (it only
+  // mounts once `mediaUrl` has loaded). Attaching with [] would run before the
+  // element exists, so the play/pause/ended listeners would never bind — which
+  // is why the control state used to freeze on its initial value.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    // Reset transient state for the newly loaded clip.
+    setVideoState((s) => ({ ...s, playing: false, currentTime: 0, duration: 0, buffering: false }));
     const handleTimeUpdate = () =>
       setVideoState((s) => ({ ...s, currentTime: v.currentTime }));
     const handleDurationChange = () =>
       setVideoState((s) => ({ ...s, duration: v.duration || 0 }));
-    const handlePlay = () => setVideoState((s) => ({ ...s, playing: true }));
+    const handlePlay = () => setVideoState((s) => ({ ...s, playing: true, buffering: false }));
     const handlePause = () => setVideoState((s) => ({ ...s, playing: false }));
-    const handleEnded = () => setVideoState((s) => ({ ...s, playing: false }));
+    const handleEnded = () => {
+      setVideoState((s) => ({ ...s, playing: false }));
+      // Auto-mark the lesson complete once it has been watched to the end.
+      toggleComplete();
+    };
+    const handleWaiting = () => setVideoState((s) => ({ ...s, buffering: true }));
+    const handlePlaying = () => setVideoState((s) => ({ ...s, playing: true, buffering: false }));
+
+    // Bug 1 fix: when the source changes (next lesson) the <video> element is
+    // remounted with its default `muted`/`volume`, which can drift from our
+    // `videoState`. Re-apply the user's last preference and re-sync the icon
+    // from the element so the two can never disagree.
+    const handleLoadedMetadata = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      const pref = videoStateRef.current;
+      v.muted = pref.muted;
+      v.volume = pref.volume;
+      setVideoState((s) => ({
+        ...s,
+        muted: v.muted,
+        volume: v.volume,
+        duration: v.duration || s.duration,
+      }));
+    };
 
     v.addEventListener("timeupdate", handleTimeUpdate);
     v.addEventListener("durationchange", handleDurationChange);
     v.addEventListener("play", handlePlay);
     v.addEventListener("pause", handlePause);
     v.addEventListener("ended", handleEnded);
+    v.addEventListener("waiting", handleWaiting);
+    v.addEventListener("playing", handlePlaying);
+    v.addEventListener("loadedmetadata", handleLoadedMetadata);
     return () => {
       v.removeEventListener("timeupdate", handleTimeUpdate);
       v.removeEventListener("durationchange", handleDurationChange);
       v.removeEventListener("play", handlePlay);
       v.removeEventListener("pause", handlePause);
       v.removeEventListener("ended", handleEnded);
+      v.removeEventListener("waiting", handleWaiting);
+      v.removeEventListener("playing", handlePlaying);
+      v.removeEventListener("loadedmetadata", handleLoadedMetadata);
     };
-  }, []);
+    // `toggleComplete` is stable for a given lesson and intentionally invoked
+    // on `ended`; re-attaching on mediaUrl change is what we want.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaUrl]);
 
   const togglePlay = () => {
     const v = videoRef.current;
@@ -264,7 +338,12 @@ export function LessonView({
   return (
     <div className="space-y-6">
       {/* Media area: rendered strictly by persisted lesson type */}
-      <div className="relative rounded-2xl overflow-hidden bg-linear-to-br from-indigo-950 to-violet-950 border border-border aspect-video group">
+      <div
+        className="relative rounded-2xl overflow-hidden bg-linear-to-br from-indigo-950 to-violet-950 border border-border aspect-video group"
+        onMouseEnter={showControls}
+        onMouseMove={showControls}
+        onMouseLeave={hideControls}
+      >
         {lesson.type === "VIDEO" && mediaUrl ? (
           <>
             <video
@@ -275,47 +354,47 @@ export function LessonView({
               className="absolute inset-0 w-full h-full object-contain"
               onClick={togglePlay}
             />
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-              <button
-                onClick={togglePlay}
-                className="w-20 h-20 bg-white/15 backdrop-blur-sm border border-white/20 rounded-full flex items-center justify-center shadow-xl hover:scale-105 transition-transform"
-                aria-label={videoState.playing ? "Pause" : "Play"}
-              >
-                {videoState.playing ? (
-                  <Pause className="text-white text-5xl" />
-                ) : (
-                  <Play className="text-white text-5xl ml-2" />
-                )}
-              </button>
-            </div>
+            {/* Center play affordance — only while paused (or buffering) and
+                 click-through otherwise so it never blocks the video/controls. */}
+            {!videoState.playing && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30">
+                <button
+                  onClick={togglePlay}
+                  className="pointer-events-auto w-20 h-20 rounded-full border border-white/20 bg-white/15 shadow-xl backdrop-blur-sm transition-transform hover:scale-105 flex items-center justify-center"
+                  aria-label={videoState.buffering ? "Buffering" : "Play"}
+                >
+                  {videoState.buffering ? (
+                    <Spinner className="text-white" />
+                  ) : (
+                    <Play className="ml-2 text-5xl text-white" />
+                  )}
+                </button>
+              </div>
+            )}
 
-            {/* Controls */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+            {/* Controls — visible on hover or while paused, auto-hidden after a
+                short inactivity period while playing (Bug 2). */}
+            <div
+              className={cn(
+                "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4 transition-opacity duration-300",
+                controlsVisible || !videoState.playing
+                  ? "opacity-100"
+                  : "pointer-events-none opacity-0",
+              )}
+            >
               <div className="flex items-center gap-3">
                 <button
                   onClick={togglePlay}
-                  className="text-white hover:text-primary transition-colors p-1"
+                  className="shrink-0 p-1 text-white transition-colors hover:text-primary"
                   aria-label={videoState.playing ? "Pause" : "Play"}
                 >
-                  {videoState.playing ? (
-                    <Pause size={20} />
-                  ) : (
-                    <Play size={20} />
-                  )}
+                  {videoState.playing ? <Pause size={20} /> : <Play size={20} />}
                 </button>
 
-                <div
-                  className="flex-1 h-1.5 bg-white/25 rounded-full cursor-pointer relative"
-                  onClick={(e) => {
-                    if (!video) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const percent =
-                      (e.nativeEvent.clientX - rect.left) / rect.width;
-                    video.currentTime = percent * (video.duration || 0);
-                  }}
-                >
+                {/* Progress — display-only (seeking disabled). */}
+                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/25">
                   <div
-                    className="absolute left-0 top-0 h-full bg-primary rounded-full"
+                    className="absolute left-0 top-0 h-full rounded-full bg-primary"
                     style={{
                       width: `${
                         videoState.duration > 0
@@ -324,26 +403,16 @@ export function LessonView({
                       }%`,
                     }}
                   />
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow"
-                    style={{
-                      left: `${
-                        videoState.duration > 0
-                          ? (videoState.currentTime / videoState.duration) * 100
-                          : 0
-                      }%`,
-                    }}
-                  />
                 </div>
 
-                <span className="text-white text-xs font-mono w-20 text-right">
+                <span className="w-24 text-right font-mono text-xs tabular-nums text-white">
                   {formatTime(videoState.currentTime)} /{" "}
                   {formatTime(
                     videoState.duration || (lesson.videoDuration ?? 0),
                   )}
                 </span>
 
-                <div className="hidden sm:flex items-center gap-2">
+                <div className="hidden items-center gap-2 sm:flex">
                   <button
                     onClick={() => {
                       const v = videoRef.current;
@@ -351,7 +420,7 @@ export function LessonView({
                       v.muted = !v.muted;
                       setVideoState((s) => ({ ...s, muted: v.muted }));
                     }}
-                    className="text-white hover:text-primary transition-colors p-1"
+                    className="p-1 text-white transition-colors hover:text-primary"
                     aria-label={videoState.muted ? "Unmute" : "Mute"}
                   >
                     {videoState.muted ? (
@@ -377,7 +446,7 @@ export function LessonView({
                         muted: vol === 0,
                       }));
                     }}
-                    className="w-20 h-1.5 bg-white/25 rounded-full appearance-none cursor-pointer accent-white"
+                    className="h-1.5 w-20 cursor-pointer appearance-none rounded-full bg-white/25 accent-white"
                   />
                   <button
                     onClick={() => {

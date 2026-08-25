@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api-client";
 import { Alert } from "@/components/ui/alert";
+import { PasswordInput } from "@/components/ui/password-input";
 
 function passwordStrength(val: string): { level: 0 | 1 | 2 | 3 | 4; label: string; color: string } {
   let strength = 0;
@@ -32,7 +33,6 @@ function ResetForm() {
   const token = searchParams.get("token") ?? "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -103,27 +103,16 @@ function ResetForm() {
           <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-on-surface-variant">
             <span className="material-symbols-outlined text-[20px]">lock</span>
           </span>
-          <input
+          <PasswordInput
             id="new_password"
-            type={showPassword ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
             required
             minLength={8}
             autoComplete="new-password"
-            className="block w-full pl-10 pr-10 py-2.5 bg-surface border border-outline-variant rounded-[10px] font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none transition-shadow"
+            className="block w-full pl-10 py-2.5 bg-surface border border-outline-variant rounded-[10px] font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none transition-shadow"
           />
-          <button
-            type="button"
-            aria-label="Toggle password visibility"
-            onClick={() => setShowPassword((v) => !v)}
-            className="absolute inset-y-0 right-0 pr-3 flex items-center text-on-surface-variant hover:text-primary transition-colors focus:outline-none"
-          >
-            <span className="material-symbols-outlined text-[20px]">
-              {showPassword ? "visibility" : "visibility_off"}
-            </span>
-          </button>
         </div>
       </div>
 
@@ -159,15 +148,14 @@ function ResetForm() {
           <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-on-surface-variant">
             <span className="material-symbols-outlined text-[20px]">lock_reset</span>
           </span>
-          <input
+          <PasswordInput
             id="confirm_password"
-            type="password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             placeholder="••••••••"
             required
             autoComplete="new-password"
-            className="block w-full pl-10 pr-3 py-2.5 bg-surface border border-outline-variant rounded-[10px] font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none transition-shadow"
+            className="block w-full pl-10 py-2.5 bg-surface border border-outline-variant rounded-[10px] font-body-md text-body-md text-on-surface focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none transition-shadow"
           />
         </div>
       </div>

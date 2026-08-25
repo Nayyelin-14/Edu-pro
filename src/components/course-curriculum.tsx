@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, FileText, Lock, PlayCircle, Sparkles } from "lucide-react";
+import { ChevronDown, CheckCircle2, FileText, Lock, PlayCircle, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatDuration } from "@/lib/utils";
+import { usePreview } from "@/components/video-preview-provider";
 
 export interface CurriculumLesson {
   id: string;
@@ -37,10 +38,19 @@ export interface CurriculumTest {
 interface CourseCurriculumProps {
   modules: CurriculumModule[];
   tests: CurriculumTest[];
+  courseId: string;
+  completedLessonIds?: string[];
 }
 
-export function CourseCurriculum({ modules, tests }: CourseCurriculumProps) {
+export function CourseCurriculum({
+  modules,
+  tests,
+  courseId,
+  completedLessonIds,
+}: CourseCurriculumProps) {
   const [openId, setOpenId] = useState<string | null>(modules[0]?.id ?? null);
+  const { openPreview } = usePreview();
+  const completedSet = new Set(completedLessonIds ?? []);
 
   const totalLessons = modules.reduce((acc, m) => acc + m.lessons.length, 0);
 
@@ -103,17 +113,53 @@ export function CourseCurriculum({ modules, tests }: CourseCurriculumProps) {
                   {module.lessons.map((lesson) => (
                     <div
                       key={lesson.id}
-                      className="flex items-center justify-between gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/40"
+                      onClick={
+                        lesson.isFree
+                          ? () => openPreview({ courseId, lessonId: lesson.id })
+                          : undefined
+                      }
+                      role={lesson.isFree ? "button" : undefined}
+                      tabIndex={lesson.isFree ? 0 : undefined}
+                      onKeyDown={
+                        lesson.isFree
+                          ? (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openPreview({ courseId, lessonId: lesson.id });
+                              }
+                            }
+                          : undefined
+                      }
+                      className={cn(
+                        "flex items-center justify-between gap-3 rounded-md px-2 py-2 transition-colors",
+                        lesson.isFree
+                          ? "cursor-pointer hover:bg-muted/40"
+                          : "hover:bg-muted/40",
+                      )}
                     >
                       <div className="flex min-w-0 items-center gap-3">
-                        {lesson.videoDuration ? (
+                        {completedSet.has(lesson.id) ? (
+                          <CheckCircle2 className="size-5 shrink-0 text-emerald-500" />
+                        ) : lesson.videoDuration ? (
                           <PlayCircle className="size-5 shrink-0 text-muted-foreground" />
                         ) : (
                           <FileText className="size-5 shrink-0 text-muted-foreground" />
                         )}
-                        <span className="truncate text-sm text-foreground">
+                        <span
+                          className={cn(
+                            "truncate text-sm",
+                            completedSet.has(lesson.id)
+                              ? "text-foreground"
+                              : "text-foreground",
+                          )}
+                        >
                           {lesson.title}
                         </span>
+                        {completedSet.has(lesson.id) && (
+                          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                            Done
+                          </span>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {lesson.videoDuration ? (

@@ -5,6 +5,21 @@ import type { QuestionShape } from "@/types/content";
 import { toQuestionView } from "@/types/content";
 import type { TenantContext } from "@/server/tenant-context";
 import { isEnrolled } from "./enrollment.service";
+import { getItemProgress } from "./learning.service";
+
+/** Minimum share of a course's items (lessons AND quizzes) that must be
+ *  finished before the learner is allowed to attempt (start or submit) the
+ *  final exam. */
+export const MIN_COURSE_COMPLETION_PERCENT = 85;
+
+async function assertEligibleForTest(ctx: TenantContext, courseId: string) {
+  const completion = await getItemProgress(ctx, courseId);
+  if (completion.percent < MIN_COURSE_COMPLETION_PERCENT) {
+    throw forbidden(
+      `Complete at least ${MIN_COURSE_COMPLETION_PERCENT}% of the course (lessons & quizzes) before taking the final exam (you're at ${completion.percent}%).`,
+    );
+  }
+}
 
 interface AnswerInput {
   questionId: string;
@@ -22,6 +37,7 @@ export async function startTest(ctx: TenantContext, testId: string) {
   if (!test.course.isPublished) throw notFound("Course not found");
   const enrolled = await isEnrolled(userId, test.courseId, ctx.tenant.id);
   if (!enrolled) throw notFound("Enroll in the course first");
+  await assertEligibleForTest(ctx, test.courseId);
   await assertAttemptsAvailable(userId, test, ctx.tenant.id);
 
   const questions = fromJson<QuestionShape[]>(test.questions).map(toQuestionView);
@@ -73,6 +89,7 @@ export async function submitTest(
   if (!test || !test.isEnabled) throw notFound("Test not found");
   const enrolled = await isEnrolled(userId, test.courseId, ctx.tenant.id);
   if (!enrolled) throw notFound("Enroll in the course first");
+  await assertEligibleForTest(ctx, test.courseId);
   await assertAttemptsAvailable(userId, test, ctx.tenant.id);
 
   const questions = fromJson<QuestionShape[]>(test.questions);

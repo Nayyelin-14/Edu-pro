@@ -38,6 +38,11 @@ interface CurriculumSidebarProps {
   modules: ModuleShape[];
   tests: TestShape[];
   completedLessonIds: string[];
+  completedQuizIds?: string[];
+  /** Aggregate progress — must come from the page's single source of truth. */
+  progressPercent: number;
+  completedItems: number;
+  totalItems: number;
   courseId: string;
   currentLessonId?: string;
   currentQuizId?: string;
@@ -56,17 +61,17 @@ export function CurriculumSidebar({
   modules,
   tests,
   completedLessonIds,
+  completedQuizIds = [],
+  progressPercent,
+  completedItems,
+  totalItems,
   courseId,
   currentLessonId,
   currentQuizId,
 }: CurriculumSidebarProps) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-
-  const totalLessons = modules.reduce((acc, m) => acc + m.lessons.length, 0);
-  const completedCount = completedLessonIds.length;
-  const progressPercent =
-    totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0;
+  const completedQuizSet = new Set(completedQuizIds);
 
   const rows: SidebarRow[] = [];
   let lessonCount = 0;
@@ -93,7 +98,7 @@ export function CurriculumSidebar({
         </h3>
 
         <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-          {completedCount} / {totalLessons} complete
+          {completedItems} / {totalItems} complete
         </p>
 
         <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-2">
@@ -129,6 +134,7 @@ export function CurriculumSidebar({
 
             if (row.type === "quiz") {
               const active = currentQuizId === row.quiz.id;
+              const done = completedQuizSet.has(row.quiz.id);
 
               return (
                 <Link
@@ -145,12 +151,18 @@ export function CurriculumSidebar({
                   <div
                     className={cn(
                       "h-6 w-6 rounded-full flex items-center justify-center flex-shrink-0",
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground",
+                      done
+                        ? "bg-emerald-500 text-white"
+                        : active
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground",
                     )}
                   >
-                    <FileQuestion className="h-3.5 w-3.5" />
+                    {done ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <FileQuestion className="h-3.5 w-3.5" />
+                    )}
                   </div>
 
                   <div className="flex-1 min-w-0">

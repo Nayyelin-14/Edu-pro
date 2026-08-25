@@ -246,13 +246,14 @@ model LessonContentArchive {
 }
 
 model Enrollment {
-  id        String   @id @default(cuid())
-  tenantId  String
-  userId    String
-  courseId  String
-  createdAt DateTime @default(now())
-  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  tenantId    String
+  userId      String
+  courseId    String
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  course      Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, courseId, tenantId])
   @@index([courseId])
@@ -279,11 +280,12 @@ model Quiz {
   moduleId    String
   title       String
   questions   Json         @default("[]")
+  position    Int          @default(0)
   createdAt   DateTime     @default(now())
   module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   quizResults QuizResult[]
 
-  @@index([moduleId])
+  @@index([moduleId, position])
   @@index([tenantId])
 }
 
@@ -614,6 +616,9 @@ model Order {
   @@index([courseId])
   @@index([status])
   @@index([userId])
+  // At most one in-flight (PENDING) order per user+course. Prevents duplicate
+  // Stripe sessions / double charges from concurrent "Buy now" clicks or retries.
+  @@unique([userId, courseId, status])
 }
 
 enum UserRole {
@@ -716,6 +721,8 @@ enum OrderStatus {
   PAID
   FAILED
   REFUNDED
+  DISPUTED
+  EXPIRED
 }
 
 enum RoadmapStatus {

@@ -16,8 +16,11 @@ import { getDictionary, type Locale } from "@/i18n/dictionaries";
 
 import { Button } from "@/components/ui/button";
 import { CourseActions } from "@/components/course-actions";
+import { CheckoutReturnHandler } from "@/components/checkout-return-handler";
 import { CourseCurriculum } from "@/components/course-curriculum";
 import { ReviewForm } from "@/components/review-form";
+import { PreviewProvider } from "@/components/video-preview-provider";
+import { HeroPreviewButton } from "@/components/hero-preview-button";
 import { Reveal } from "@/components/reveal";
 import { getCoursePage } from "@/server/services/course.service";
 import { resolveTenantContext } from "@/server/tenant-context";
@@ -25,6 +28,7 @@ import {
   getEnrollmentProgress,
 } from "@/server/services/enrollment.service";
 import { isWishlisted } from "@/server/services/wishlist.service";
+import { getCompletedLessonIds } from "@/server/services/enrollment.service";
 import { getSessionUser } from "@/lib/auth";
 import { cn, courseGradient } from "@/lib/utils";
 
@@ -150,6 +154,7 @@ export default async function CourseDetailPage({ params }: PageProps) {
   let initialEnrolled = false;
   let initialSaved = false;
   let initialProgress: number | null = null;
+  let completedLessonIds: string[] = [];
   if (viewer) {
     // Tenant-scoped personalization: resolved via canonical TenantContext.
     const ctx = await resolveTenantContext(viewer);
@@ -160,6 +165,9 @@ export default async function CourseDetailPage({ params }: PageProps) {
     initialEnrolled = enrollment !== null;
     initialProgress = enrollment?.percent ?? null;
     initialSaved = saved;
+    if (initialEnrolled) {
+      completedLessonIds = await getCompletedLessonIds(ctx, course.id);
+    }
   }
 
   const totalDurationSeconds = course.modules.reduce(
@@ -184,11 +192,18 @@ export default async function CourseDetailPage({ params }: PageProps) {
   const durationLabel = formatDuration(totalDurationSeconds, t.course.selfPaced);
   const lessonsLabel = t.course.lessonCount(totalLessons);
 
+  const firstFreeLessonId = course.modules
+    .flatMap((m) => m.lessons)
+    .find((l) => l.isFree)?.id;
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* =========================================================
-          TOP NAVIGATION
-      ========================================================= */}
+   <PreviewProvider>
+      <div className="min-h-screen bg-background text-foreground">
+        <CheckoutReturnHandler courseId={course.id} slug={course.slug} />
+
+        {/* =========================================================
+            TOP NAVIGATION
+        ========================================================= */}
 
       <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
@@ -226,18 +241,29 @@ export default async function CourseDetailPage({ params }: PageProps) {
         ========================================================= */}
 
         <Reveal>
-          <header
-            className={cn(
-              "relative overflow-hidden rounded-3xl bg-gradient-to-br p-8 sm:p-10 lg:p-14",
-              gradient,
+          <header className="group relative overflow-hidden rounded-3xl border border-border shadow-xl shadow-primary/5">
+            {/* Background: cover image with a legibility gradient, or a brand
+                gradient when there is no cover. */}
+            {image ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={image}
+                  alt=""
+                  className="absolute inset-0 size-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/55 to-black/25" />
+                <div className="absolute inset-0 bg-gradient-to-r from-primary/40 via-transparent to-transparent mix-blend-multiply" />
+              </>
+            ) : (
+              <div className={cn("absolute inset-0 bg-gradient-to-br", gradient)} />
             )}
-          >
-            <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10 blur-3xl" />
-            <div className="pointer-events-none absolute -bottom-16 -left-16 h-56 w-56 rounded-full bg-black/15 blur-3xl" />
 
-            <div className="relative grid gap-8 lg:grid-cols-3 lg:gap-10">
+            <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-white/10 blur-3xl" />
+
+            <div className="relative grid items-center gap-8 p-8 sm:p-10 lg:grid-cols-3 lg:gap-10 lg:p-14">
               <div className="lg:col-span-2">
-                {/* Badge */}
+                {/* Badges */}
                 <div className="mb-5 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center rounded-full border border-white/20 bg-white/15 px-3 py-1.5 text-xs font-medium text-white backdrop-blur-sm">
                     {course.category?.name ?? "Course"}
@@ -313,26 +339,38 @@ export default async function CourseDetailPage({ params }: PageProps) {
                 </div>
               </div>
 
-              {/* Cover visual */}
+              {/* Floating preview card */}
               <div className="flex items-center justify-center lg:justify-end">
-                <div className="relative">
-                  <div className="absolute -inset-3 rounded-[2rem] bg-white/10 blur-2xl" />
-
+                <div className="group/card relative aspect-video w-full max-w-md overflow-hidden rounded-3xl border border-white/20 shadow-2xl">
                   {image ? (
-                    <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-3xl border border-white/20 shadow-2xl">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={image}
-                        alt={course.title}
-                        className="size-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
-                    </div>
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={image}
+                      alt={course.title}
+                      className="size-full object-cover"
+                    />
                   ) : (
-                    <div className="flex size-24 items-center justify-center rounded-3xl border border-white/20 bg-white/15 shadow-xl backdrop-blur-sm">
+                    <div className="flex size-full items-center justify-center bg-white/10">
                       <BookOpen className="size-12 text-white/80" />
                     </div>
                   )}
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+
+                  <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
+                    <span className="rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-bold text-foreground">
+                      Preview
+                    </span>
+                    <span className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-white">
+                      {free
+                        ? t.course.freeCourse
+                        : `฿${Number(course.price ?? 0).toLocaleString("en-US")}`}
+                    </span>
+                  </div>
+
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <HeroPreviewButton courseId={course.id} lessonId={firstFreeLessonId} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -428,7 +466,12 @@ export default async function CourseDetailPage({ params }: PageProps) {
                   </div>
                 </div>
 
-                <CourseCurriculum modules={course.modules} tests={course.tests} />
+                <CourseCurriculum
+                  modules={course.modules}
+                  tests={course.tests}
+                  courseId={course.id}
+                  completedLessonIds={completedLessonIds}
+                />
               </section>
             </Reveal>
 
@@ -639,5 +682,6 @@ export default async function CourseDetailPage({ params }: PageProps) {
         </main>
       </div>
     </div>
+   </PreviewProvider>
   );
 }

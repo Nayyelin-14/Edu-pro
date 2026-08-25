@@ -14,6 +14,7 @@ import {
 import { apiFetch } from "@/lib/api-client";
 import { sanitizeReturnTo } from "@/lib/urls";
 import { Alert } from "@/components/ui/alert";
+import { PasswordInput } from "@/components/ui/password-input";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/use-auth";
 import { setRememberMe } from "@/lib/remember-me";
@@ -348,10 +349,9 @@ function LoginForm() {
             <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
               <Lock className="h-5 w-5 text-muted-foreground" />
             </div>
-            <input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

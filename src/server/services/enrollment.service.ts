@@ -118,6 +118,44 @@ export async function getEnrollmentProgress(ctx: TenantContext, courseId: string
   };
 }
 
+/**
+ * Course-wide lesson completion for a user, scoped to a single course. Used to
+ * gate the final exam (requires a minimum % of lessons finished).
+ */
+export async function getCourseCompletion(
+  ctx: TenantContext,
+  courseId: string,
+): Promise<{ completedLessons: number; totalLessons: number; percent: number }> {
+  const lessons = await prisma.lesson.findMany({
+    where: { module: { courseId, tenantId: ctx.tenant.id } },
+    select: { id: true },
+  });
+  const totalLessons = lessons.length;
+  if (totalLessons === 0) return { completedLessons: 0, totalLessons: 0, percent: 0 };
+  const completedRows = await prisma.completedLesson.findMany({
+    where: { userId: ctx.user.id, lesson: { module: { courseId } } },
+    select: { lessonId: true },
+  });
+  const completedLessons = completedRows.length;
+  return {
+    completedLessons,
+    totalLessons,
+    percent: Math.round((completedLessons / totalLessons) * 100),
+  };
+}
+
+/** Ids of lessons the user has completed within a single course. */
+export async function getCompletedLessonIds(
+  ctx: TenantContext,
+  courseId: string,
+): Promise<string[]> {
+  const rows = await prisma.completedLesson.findMany({
+    where: { userId: ctx.user.id, lesson: { module: { courseId } } },
+    select: { lessonId: true },
+  });
+  return rows.map((r) => r.lessonId);
+}
+
 export async function getUserEnrollments(ctx: TenantContext) {
   const rows = await prisma.enrollment.findMany({
     where: { userId: ctx.user.id, tenantId: ctx.tenant.id },
@@ -138,15 +176,22 @@ export async function getUserEnrollments(ctx: TenantContext) {
 
   const completedRows = await prisma.completedLesson.findMany({
     where: { userId: ctx.user.id, tenantId: ctx.tenant.id },
-    select: { lessonId: true },
+    select: { lessonId: true, lesson: { select: { module: { select: { courseId: true } } } } },
   });
-  const completedSet = new Set(completedRows.map((c) => c.lessonId));
+  const byCourse = new Map<string, Set<string>>();
+  for (const r of completedRows) {
+    const cid = r.lesson?.module?.courseId;
+    if (!cid) continue;
+    if (!byCourse.has(cid)) byCourse.set(cid, new Set());
+    byCourse.get(cid)!.add(r.lessonId);
+  }
 
   return rows.map((row) => {
     const totalLessons = row.course.modules.reduce(
       (acc, m) => acc + m.lessons.length,
       0,
     );
+    const completedSet = byCourse.get(row.course.id) ?? new Set<string>();
     const completedLessons = row.course.modules
       .flatMap((m) => m.lessons)
       .filter((l) => completedSet.has(l.id)).length;

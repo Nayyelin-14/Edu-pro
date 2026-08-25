@@ -10,13 +10,14 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "for f in tests/integration/*.test.ts; do npx tsx --test \"$f\" || exit 1; done",
+    "test:integration": "for f in tests/integration/*.test.ts; do npx tsx tests/helpers/provision-test-db.ts && npx tsx --test \"$f\" || exit 1; done",
     "test:all": "npm run test && npm run test:integration",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
-    "db:seed": "prisma db seed"
+    "db:seed": "prisma db seed",
+    "seed:demo": "tsx scripts/seed-demo-accounts.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

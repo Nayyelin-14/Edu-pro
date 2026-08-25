@@ -28,3 +28,11 @@ export function getTestAdminUrl(): string {
   if (!base) throw new Error("DATABASE_URL is not set");
   return withDb(base, TEST_DB).replace("-pooler", "");
 }
+
+/** Direct (non-pooled) admin URL for the *application* database — used to
+ * create the throwaway `elearning_test` database if it does not exist yet. */
+export function getMainAdminUrl(): string {
+  const base = process.env.DATABASE_URL;
+  if (!base) throw new Error("DATABASE_URL is not set");
+  return base.replace("-pooler", "");
+}

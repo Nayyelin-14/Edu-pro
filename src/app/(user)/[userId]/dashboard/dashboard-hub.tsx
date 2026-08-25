@@ -17,6 +17,7 @@ import { useParams } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -295,9 +296,8 @@ export default function DashboardHub() {
                     <Label htmlFor="currentPassword" className="text-label-sm uppercase tracking-wider text-on-surface-variant">
                       {t.auth.currentPassword}
                     </Label>
-                    <Input
+                    <PasswordInput
                       id="currentPassword"
-                      type="password"
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
                       required
@@ -309,9 +309,8 @@ export default function DashboardHub() {
                     <Label htmlFor="newPassword" className="text-label-sm uppercase tracking-wider text-on-surface-variant">
                       {t.auth.newPassword}
                     </Label>
-                    <Input
+                    <PasswordInput
                       id="newPassword"
-                      type="password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       required
@@ -337,9 +336,8 @@ export default function DashboardHub() {
                   <form onSubmit={handleDisable2fa} className="space-y-3">
                     <div className="space-y-1">
                       <Label htmlFor="disablePassword" className="text-label-md">{t.auth.currentPassword}</Label>
-                      <Input
+                      <PasswordInput
                         id="disablePassword"
-                        type="password"
                         value={disablePassword}
                         onChange={(e) => setDisablePassword(e.target.value)}
                         required

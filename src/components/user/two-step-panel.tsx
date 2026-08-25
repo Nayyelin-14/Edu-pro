@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Alert } from "@/components/ui/alert";
 import { apiFetch } from "@/lib/api-client";
@@ -110,9 +111,8 @@ export function TwoStepPanel() {
             </p>
             <div className="space-y-2">
               <Label htmlFor="disablePassword">Password</Label>
-              <Input
+              <PasswordInput
                 id="disablePassword"
-                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

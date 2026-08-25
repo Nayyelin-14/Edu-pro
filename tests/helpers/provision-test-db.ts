@@ -6,9 +6,10 @@
  * doubles as the "migration deployment on a fresh database" verification.
  */
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "pg";
-import { getTestAdminUrl } from "./setup-test-env";
+import { getMainAdminUrl, getTestAdminUrl } from "./setup-test-env";
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 5_000;
@@ -34,6 +35,19 @@ export async function provisionFreshTestDatabase(): Promise<void> {
 }
 
 async function provisionOnce(): Promise<void> {
+  // Ensure the throwaway database exists (Neon-safe: CREATE DATABASE outside a
+  // transaction; ignore "already exists").
+  const main = new Client({ connectionString: getMainAdminUrl() });
+  await main.connect();
+  try {
+    await main.query('CREATE DATABASE "elearning_test"');
+  } catch (err: unknown) {
+    const code = (err as { code?: string })?.code;
+    if (code !== "42P04") throw err;
+  } finally {
+    await main.end();
+  }
+
   const admin = new Client({ connectionString: getTestAdminUrl() });
   await admin.connect();
   try {
@@ -50,4 +64,19 @@ async function provisionOnce(): Promise<void> {
     env: { ...process.env, DATABASE_URL: getTestAdminUrl() },
     stdio: "pipe",
   });
+}
+
+// Allow `npx tsx tests/helpers/provision-test-db.ts` to run standalone in CI
+// (the integration script invokes it once per test file).
+const invokedDirectly =
+  process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  provisionFreshTestDatabase()
+    .then(() => {
+      console.log("Test database provisioned.");
+    })
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
 }
