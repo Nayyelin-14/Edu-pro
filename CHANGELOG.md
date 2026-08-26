@@ -1,1 +1,1 @@
-- feat: theme toggle in navbar, students land on home after login; add live URL to README
+- fix: remount home on locale change so animated sections stay visible; regenerate README home screenshot with real backend data
