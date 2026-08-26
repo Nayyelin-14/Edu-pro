@@ -92,7 +92,7 @@ function StatPill({ label, value, icon: Icon, color }: { label: string; value: s
 }
 
 export function HomeClient({ featured, categories, counts }: HomeClientProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   const stats = [
     { label: t.home.stats.students, value: `${formatCount(counts.students)}+`, icon: Users, color: "from-indigo-500 to-violet-600" },
@@ -114,7 +114,7 @@ export function HomeClient({ featured, categories, counts }: HomeClientProps) {
   ];
 
   return (
-    <main className="min-h-screen bg-background">
+    <main key={locale} className="min-h-screen bg-background">
       <div className="mx-auto max-w-7xl px-5 sm:px-8 lg:px-10">
         {/* HERO */}
         <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary via-violet-600 to-accent p-8 sm:p-10 lg:p-14">
